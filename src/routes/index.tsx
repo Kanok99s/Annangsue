@@ -99,7 +99,7 @@ function tokenize(text: string, japanese: boolean): Token[] {
 }
 
 function ReaderPage() {
-  const [direction, setDirection] = useState<Direction>("en-ja");
+  const [direction, setDirection] = useState<Direction>("ja-en");
   const [book, setBook] = useState<ParsedBook | null>(null);
   const [pageIndex, setPageIndex] = useState(0);
   const [translation, setTranslation] = useState("");
