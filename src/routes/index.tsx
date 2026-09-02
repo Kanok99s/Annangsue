@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Header, type Direction } from "@/components/Header";
 import { parseEpub, type ParsedBook } from "@/lib/epub";
 import {
+  lookupExample,
   lookupWord,
   translatePage,
   type AlignSpan,
@@ -146,9 +147,12 @@ function ReaderPage() {
   const [hover, setHover] = useState<{ side: "src" | "tgt"; para: number; token: number } | null>(
     null,
   );
-  const [selected, setSelected] = useState<{ word: string; data?: WordLookup; loading: boolean } | null>(
-    null,
-  );
+  const [selected, setSelected] = useState<{
+    word: string;
+    data?: WordLookup;
+    loading: boolean;
+    exampleLoading: boolean;
+  } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
@@ -156,6 +160,7 @@ function ReaderPage() {
   const { entries, add } = useVocab();
   const doTranslate = useServerFn(translatePage);
   const doLookup = useServerFn(lookupWord);
+  const doExample = useServerFn(lookupExample);
 
   const page = book?.pages[pageIndex];
   const sourceIsJapanese = direction === "ja-en";
@@ -330,13 +335,33 @@ function ReaderPage() {
   const onWordClick = async (word: string, context: string) => {
     const clean = word.replace(/[^\p{L}\p{N}'-]/gu, "");
     if (!clean) return;
-    setSelected({ word: clean, loading: true });
+    setSelected({ word: clean, loading: true, exampleLoading: false });
     speak(clean, sourceIsJapanese ? "ja-JP" : "en-US");
     try {
+      // Dictionary card first — meaning, reading and part of speech appear as
+      // soon as Jisho answers, without waiting on the slower example search.
       const data = await doLookup({ data: { word: clean, context, direction } });
-      setSelected({ word: clean, data, loading: false });
+      setSelected((prev) =>
+        prev?.word === clean
+          ? { word: clean, data, loading: false, exampleLoading: true }
+          : prev,
+      );
+      try {
+        const example = await doExample({
+          data: { term: data.term, reading: data.reading, word: clean },
+        });
+        setSelected((prev) =>
+          prev?.word === clean && prev.data?.term === data.term
+            ? { ...prev, data: { ...prev.data, ...example }, exampleLoading: false }
+            : prev,
+        );
+      } catch {
+        setSelected((prev) =>
+          prev?.word === clean ? { ...prev, exampleLoading: false } : prev,
+        );
+      }
     } catch (error) {
-      setSelected(null);
+      setSelected((prev) => (prev?.word === clean ? null : prev));
       toast.error(error instanceof Error ? error.message : "Lookup failed.");
     }
   };
@@ -586,7 +611,7 @@ function ReaderPage() {
                       {selected.data.meaning}
                     </p>
                   </div>
-                  {selected.data.example && (
+                  {selected.data.example ? (
                     <>
                       <p className="mt-4 font-jp text-[15px] leading-relaxed">
                         {selected.data.example}
@@ -597,11 +622,16 @@ function ReaderPage() {
                         </p>
                       )}
                     </>
-                  )}
+                  ) : selected.exampleLoading ? (
+                    <p className="mt-4 animate-pulse text-sm text-mute">
+                      Finding an example sentence…
+                    </p>
+                  ) : null}
                   <div className="mt-5 flex items-center gap-3">
                     <button
                       onClick={saveSelected}
-                      className="rounded-full bg-accent px-5 py-2 text-sm font-semibold text-accent-foreground"
+                      disabled={selected.loading || selected.exampleLoading}
+                      className="rounded-full bg-accent px-5 py-2 text-sm font-semibold text-accent-foreground disabled:opacity-40"
                     >
                       Save to list
                     </button>

@@ -46,6 +46,8 @@ const translateCache = new Map<string, PageTranslation>();
 const TRANSLATE_CACHE_MAX = 100;
 const lookupCache = new Map<string, WordLookup>();
 const LOOKUP_CACHE_MAX = 200;
+const exampleCache = new Map<string, WordExample>();
+const EXAMPLE_CACHE_MAX = 200;
 
 function withTimeout(ms = REQUEST_TIMEOUT_MS): AbortSignal {
   return AbortSignal.timeout(ms);
@@ -361,41 +363,55 @@ type TatoebaHit = {
   translations?: { text?: string; lang?: string }[];
 };
 
-async function tatoebaExample(queries: string[]): Promise<{ example: string; exampleTranslation: string }> {
-  for (const query of queries) {
-    if (!query) continue;
-    try {
-      const params = new URLSearchParams({
-        from: TATOEBA_LANG.ja,
-        to: TATOEBA_LANG.en,
-        query,
-        sort: "relevance",
-        limit: "5",
-        orphans: "no",
-        unapproved: "no",
-      });
-      const response = await fetch(`${TATOEBA_SEARCH}?${params.toString()}`, {
-        signal: withTimeout(10_000),
-      });
-      if (!response.ok) continue;
-      const data = (await response.json()) as { results?: unknown };
-      if (!Array.isArray(data.results)) continue;
-      for (const hit of data.results as TatoebaHit[]) {
-        const text = typeof hit.text === "string" ? hit.text.trim() : "";
-        if (!text || !text.includes(query)) continue;
-        const translation = (hit.translations ?? []).find((t) =>
-          typeof t.lang === "string" && t.lang.startsWith(TATOEBA_LANG.en),
-        );
-        const translationText = translation?.text?.trim() ?? "";
-        if (translationText) {
-          return { example: text, exampleTranslation: translationText };
-        }
-      }
-    } catch {
-      // A missing example sentence must never fail the whole lookup.
+/** One Tatoeba search; resolves to a usable hit or null (never throws). */
+async function tatoebaQuery(query: string): Promise<WordExample | null> {
+  try {
+    const params = new URLSearchParams({
+      from: TATOEBA_LANG.ja,
+      to: TATOEBA_LANG.en,
+      query,
+      sort: "relevance",
+      limit: "5",
+      orphans: "no",
+      unapproved: "no",
+    });
+    const response = await fetch(`${TATOEBA_SEARCH}?${params.toString()}`, {
+      signal: withTimeout(6_000),
+    });
+    if (!response.ok) return null;
+    const data = (await response.json()) as { results?: unknown };
+    if (!Array.isArray(data.results)) return null;
+    for (const hit of data.results as TatoebaHit[]) {
+      const text = typeof hit.text === "string" ? hit.text.trim() : "";
+      if (!text || !text.includes(query)) continue;
+      const translation = (hit.translations ?? []).find((t) =>
+        typeof t.lang === "string" && t.lang.startsWith(TATOEBA_LANG.en),
+      );
+      const translationText = translation?.text?.trim() ?? "";
+      if (translationText) return { example: text, exampleTranslation: translationText };
     }
+  } catch {
+    // A missing example sentence must never fail the lookup.
   }
-  return { example: "", exampleTranslation: "" };
+  return null;
+}
+
+/**
+ * Best-effort example sentence for a headword. All candidate queries fire at
+ * once; the first usable hit wins, so a slow or empty query never delays a
+ * sentence that another query already found.
+ */
+async function tatoebaExample(queries: string[]): Promise<WordExample> {
+  const candidates = [...new Set(queries.filter(Boolean))];
+  if (candidates.length === 0) return { example: "", exampleTranslation: "" };
+  const attempts = candidates.map((q) =>
+    tatoebaQuery(q).then((hit) => (hit ? hit : Promise.reject(hit))),
+  );
+  try {
+    return await Promise.any(attempts);
+  } catch {
+    return { example: "", exampleTranslation: "" };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -610,21 +626,44 @@ export const lookupWord = createServerFn({ method: "POST" })
     const meaning = joinMeaning(entry);
     if (!meaning) throw new Error(`No dictionary entry found for “${word}”.`);
 
-    const { example, exampleTranslation } = await tatoebaExample([
-      term,
-      reading,
-      japanese ? word : "",
-    ]);
-
+    // The dictionary card is returned without the example sentence — the
+    // client streams that in via lookupExample so the meaning shows fast.
     const lookup: WordLookup = {
       term,
       reading,
       meaning,
       partOfSpeech: partOfSpeechOf(entry),
-      example,
-      exampleTranslation,
+      example: "",
+      exampleTranslation: "",
     };
 
     cachePut(lookupCache, cacheKey, lookup, LOOKUP_CACHE_MAX);
     return lookup;
+  });
+
+const ExampleSchema = z.object({
+  term: z.string().min(1).max(80),
+  reading: z.string().max(120).default(""),
+  word: z.string().max(80).default(""),
+});
+
+export type WordExample = { example: string; exampleTranslation: string };
+
+/** Fetch the example sentence for an already-resolved headword (background). */
+export const lookupExample = createServerFn({ method: "POST" })
+  .inputValidator((input: unknown) => ExampleSchema.parse(input))
+  .handler(async ({ data }) => {
+    const exampleKey = `ex\u0000${data.term.toLowerCase()}\u0000${data.reading.toLowerCase()}\u0000${data.word.toLowerCase()}`;
+    const cached = cacheGet(exampleCache, exampleKey);
+    if (cached !== undefined) return cached;
+
+    const tappedJapanese = isJapaneseText(data.word || data.term);
+    const example = await tatoebaExample([
+      data.term,
+      data.reading,
+      tappedJapanese ? data.word : "",
+    ]);
+
+    cachePut(exampleCache, exampleKey, example, EXAMPLE_CACHE_MAX);
+    return example;
   });
