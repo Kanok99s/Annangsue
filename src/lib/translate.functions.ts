@@ -204,7 +204,12 @@ async function jotobaSearch(search: string, language: "Japanese" | "English"): P
       `[jotoba] ${response.status} for ${JSON.stringify({ search, language })} ` +
         `(len=${search.length}): ${body.slice(0, 400)}`,
     );
-    throw new Error(`The dictionary service failed (${response.status}).`);
+    const hint = body.trim().replace(/\s+/g, " ").slice(0, 160);
+    throw new Error(
+      hint
+        ? `The dictionary service failed (${response.status}): ${hint}`
+        : `The dictionary service failed (${response.status}).`,
+    );
   }
 
   const data = (await response.json()) as { words?: unknown };
