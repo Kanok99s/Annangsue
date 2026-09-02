@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { Lang } from "@/lib/lang";
 
 // ---------------------------------------------------------------------------
-// Providers (all keyless — no LOVABLE_API_KEY or similar required):
+// Providers (all keyless — no API key required):
 //  - MyMemory  https://api.mymemory.translated.net  full-page translation
 //  - Jotoba    https://jotoba.de/api/search/words    dictionary lookups (JMdict)
 //  - Tatoeba   https://tatoeba.org/en/api_v0          example sentences

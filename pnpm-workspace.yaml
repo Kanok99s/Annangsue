@@ -1,8 +1,4 @@
 allowBuilds:
-  # dyad-default-allow-builds begin
-  # dyad-default-allow-builds-schema=v1
-  # dyad-default-allow-builds-data-version=2026-07-08.1
-  # dyad-default-allow-builds-channel=remote
   "@airbnb/node-memwatch": true
   "@anthropic-ai/claude-code": true
   "@apollo/protobufjs": true
@@ -372,7 +368,6 @@ allowBuilds:
   zeromq: true
   zlib-sync: true
   zopflipng-bin: true
-  # dyad-default-allow-builds end
 
 packages:
   - .

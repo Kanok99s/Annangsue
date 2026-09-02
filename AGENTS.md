@@ -1,10 +1,54 @@
-<!-- LOVABLE:BEGIN -->
-> [!IMPORTANT]
-> This project is connected to [Lovable](https://lovable.dev). Avoid rewriting
-> published git history — force pushing, or rebasing/amending/squashing commits
-> that are already pushed — as it rewrites history on Lovable's side and the
-> user will likely lose their project history.
->
-> Commits you push to the connected branch sync back to Lovable and show up in
-> the editor, so keep the branch in a working state.
-<!-- LOVABLE:END -->
+# Agent guidance
+
+Guidance for AI agents and contributors working in this repository.
+
+## Project
+
+**Annangsue — Bilingual EPUB Reader.** A web app for language learners that
+imports an EPUB, shows it side by side with a machine translation
+(EN/JA/KO/SV), lets readers tap words to save vocabulary, and provides study
+drills over the saved words.
+
+No backend database or account system: books are parsed in the browser, and
+saved vocabulary lives in `localStorage`.
+
+## Stack
+
+- **TanStack Start** — file-based routing + SSR; route definitions live in
+  `src/routes/` (`__root.tsx` is the app shell — keep its `<Outlet />`).
+- **React 19 + TypeScript** — strict.
+- **Tailwind CSS v4 + shadcn/ui** — components in `src/components/ui/` are
+  generated and should not be edited; build new components beside them or in
+  `src/components/`.
+- **pnpm** — the only package manager in use (`pnpm-lock.yaml`).
+
+## Folder map
+
+| Path | Purpose |
+| --- | --- |
+| `src/routes/` | File-based routes — `index.tsx` (reader), `study.tsx`, `vocabulary.tsx` |
+| `src/components/` | Shared React components (e.g. `Header.tsx`) |
+| `src/lib/epub.ts` | EPUB parsing (JSZip) → `ParsedBook` of plain-text pages |
+| `src/lib/translate.functions.ts` | Server functions: full-page translation, word lookup, example sentences (keyless public APIs) |
+| `src/lib/vocab.ts` | `localStorage`-backed vocabulary store + drill logic + speech |
+| `src/lib/lang.ts` | Language codes/directions and script helpers |
+| `src/lib/error-capture.ts`, `error-page.ts`, `server.ts` | SSR error logging / fallback error page |
+| `src/routeTree.gen.ts` | Auto-generated route tree — never edit by hand |
+
+## Commands
+
+| Command | Meaning |
+| --- | --- |
+| `pnpm dev` | Development server with hot reload |
+| `pnpm build` | Production build (also used by the preview) |
+| `pnpm lint` | Lint with ESLint |
+| `pnpm format` | Prettier over the repo |
+
+## Conventions
+
+- Style with Tailwind utility classes; pull UI primitives from shadcn/ui.
+- The config wrapper in `vite.config.ts` already wires TanStack Start, React,
+  Tailwind, path aliases and env injection — do not add duplicate plugins.
+- Translation and dictionary features are **keyless**; never introduce a
+  required API key for core reading flow.
+- Keep diffs LF-normalized and commit-focused; don't reformat unrelated code.
