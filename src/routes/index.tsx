@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 
@@ -57,6 +57,8 @@ function ReaderPage() {
     null,
   );
   const fileRef = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const dragDepth = useRef(0);
 
   const { entries, add } = useVocab();
   const doTranslate = useServerFn(translatePage);
@@ -95,19 +97,70 @@ function ReaderPage() {
     [book, direction, translateCurrent],
   );
 
-  const onUpload = async (file: File) => {
-    try {
-      const parsed = await parseEpub(file);
-      setBook(parsed);
-      setPageIndex(0);
-      setSelected(null);
-      toast.success(`Loaded “${parsed.title}” · ${parsed.pages.length} pages`);
-      const first = parsed.pages[0];
-      if (first) void translateCurrent(first.text, direction);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not read that EPUB.");
-    }
-  };
+  const onUpload = useCallback(
+    async (file: File) => {
+      try {
+        const parsed = await parseEpub(file);
+        setBook(parsed);
+        setPageIndex(0);
+        setSelected(null);
+        toast.success(`Loaded “${parsed.title}” · ${parsed.pages.length} pages`);
+        const first = parsed.pages[0];
+        if (first) void translateCurrent(first.text, direction);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not read that EPUB.");
+      }
+    },
+    [direction, translateCurrent],
+  );
+
+  // Accept an EPUB dropped anywhere on the page, not just via the file picker.
+  useEffect(() => {
+    const hasFiles = (e: DragEvent) =>
+      Array.from(e.dataTransfer?.types ?? []).includes("Files");
+
+    const onDragEnter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepth.current += 1;
+      setDragging(true);
+    };
+    const onDragOver = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    };
+    const onDragLeave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      dragDepth.current = Math.max(0, dragDepth.current - 1);
+      if (dragDepth.current === 0) setDragging(false);
+    };
+    const onDrop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepth.current = 0;
+      setDragging(false);
+      const file = Array.from(e.dataTransfer?.files ?? []).find(
+        (f) => f.name.toLowerCase().endsWith(".epub") || f.type === "application/epub+zip",
+      );
+      if (file) {
+        void onUpload(file);
+      } else if ((e.dataTransfer?.files.length ?? 0) > 0) {
+        toast.error("That doesn’t look like an EPUB — drop a .epub file instead.");
+      }
+    };
+
+    window.addEventListener("dragenter", onDragEnter);
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("dragleave", onDragLeave);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragenter", onDragEnter);
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("dragleave", onDragLeave);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, [onUpload]);
 
   const onDirectionChange = (d: Direction) => {
     setDirection(d);
@@ -246,11 +299,12 @@ function ReaderPage() {
               ) : (
                 <div
                   onClick={() => fileRef.current?.click()}
-                  className="flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-input py-16 text-center"
+                  className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed py-16 text-center transition-colors ${dragging ? "border-accent bg-accent/5" : "border-input hover:border-accent"}`}
                 >
                   <p className="font-serif text-2xl">Drop in an EPUB</p>
                   <p className="mt-2 max-w-xs text-sm text-mute">
-                    Your book stays in this browser. Choose a file to begin reading.
+                    Drag & drop your file anywhere, or click here to browse. It stays in this
+                    browser.
                   </p>
                 </div>
               )}
@@ -375,6 +429,16 @@ function ReaderPage() {
                   </div>
                 </>
               ) : null}
+            </div>
+          </div>
+        )}
+
+        {/* DRAG & DROP OVERLAY */}
+        {dragging && (
+          <div className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center bg-background/70 p-6 backdrop-blur-sm">
+            <div className="rounded-3xl border-2 border-dashed border-accent bg-card px-12 py-10 text-center shadow-2xl">
+              <p className="font-serif text-3xl">Drop your EPUB</p>
+              <p className="mt-2 text-sm text-mute">Release to start reading</p>
             </div>
           </div>
         )}
