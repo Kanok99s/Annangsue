@@ -92,9 +92,9 @@ export function Header({
           </Link>
           <Link
             to="/study"
-            className="grid size-9 place-items-center rounded-full bg-primary font-serif text-sm text-primary-foreground"
+            className="grid size-9 place-items-center rounded-full bg-primary text-sm font-semibold text-primary-foreground"
           >
-            学
+            V
           </Link>
         </div>
       </div>
