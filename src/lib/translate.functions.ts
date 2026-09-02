@@ -198,7 +198,14 @@ async function jotobaSearch(search: string, language: "Japanese" | "English"): P
     throw new Error("The dictionary service could not be reached.");
   }
 
-  if (!response.ok) throw new Error(`The dictionary service failed (${response.status}).`);
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    console.error(
+      `[jotoba] ${response.status} for ${JSON.stringify({ search, language })} ` +
+        `(len=${search.length}): ${body.slice(0, 400)}`,
+    );
+    throw new Error(`The dictionary service failed (${response.status}).`);
+  }
 
   const data = (await response.json()) as { words?: unknown };
   if (!Array.isArray(data.words)) return [];
