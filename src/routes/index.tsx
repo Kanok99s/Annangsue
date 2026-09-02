@@ -295,7 +295,7 @@ function ReaderPage() {
     [direction, translateCurrent],
   );
 
-  /** Reopen a book from the on-device library. */
+  /** Reopen a book from the saved library. */
   const reopen = useCallback(
     async (id: string) => {
       const stored = await openBook(id);
@@ -609,7 +609,7 @@ function ReaderPage() {
                   <p className="font-serif text-2xl">Drop in an EPUB</p>
                   <p className="mt-2 max-w-xs text-sm text-mute">
                     Drag & drop your file anywhere, or click here to browse. It is saved to your
-                    library on this device.
+                    library in the cloud, ready on any device.
                   </p>
                 </div>
               )}

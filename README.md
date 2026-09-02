@@ -9,9 +9,9 @@ drill it with kanji, meaning and pronunciation exercises.
 Annangsue turns any EPUB into a bilingual reading experience for language
 learners:
 
-- **Import any EPUB** — parse the book locally in the browser (JSZip); no
-  upload server or account needed. You can also drag & drop a file anywhere on
-  the page.
+- **Import any EPUB** — parse the book in the browser (JSZip) and save it to
+  your account's cloud library. You can also drag & drop a file anywhere on the
+  page.
 - **Side-by-side reading** — read the original page next to its translation,
   with configurable source/target language directions (EN ↔ JA/KO/SV).
 - **Hover-to-match** — hover a word in either pane and its equivalent in the
@@ -24,17 +24,19 @@ learners:
 - **Vocabulary list** — every word you tapped, with an SRS-style drill score,
   ready to review.
 
-Everything is stored locally (`localStorage`), and translation/dictionary
-requests use keyless public APIs (MyMemory, Jisho, Tatoeba). Setting
-`MICROSOFT_TRANSLATOR_KEY` (free Azure tier) upgrades page translation to
-Microsoft Translator and enables the word-alignment hover feature; the app
-gracefully falls back to MyMemory when no key is present. See `.env.example`.
+Sign in with email + password (Supabase Auth), and your books and vocabulary
+lists are stored per-account in Supabase Postgres behind row-level security.
+Translation/dictionary requests use keyless public APIs (MyMemory, Jisho,
+Tatoeba). Setting `MICROSOFT_TRANSLATOR_KEY` (free Azure tier) upgrades page
+translation to Microsoft Translator and enables the word-alignment hover
+feature; the app gracefully falls back to MyMemory when no key is present. See
+`.env.example`.
 
 ## Features
 
 - Full-page translation that preserves paragraph structure
 - Smart word chunking so every word is individually tappable
-- In-browser EPUB parsing — your files never leave your device
+- Cloud library synced to your account — pick up reading on any device
 - Built-in text-to-speech for reading practice
 - No API keys required to run
 

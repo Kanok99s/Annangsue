@@ -3,9 +3,10 @@ import type { BookPage } from "./epub";
 // ---------------------------------------------------------------------------
 // Bookshelf — the app's data layer for uploaded books and their vocab lists.
 //
-// Every page talks to this module (never to IndexedDB directly). When a cloud
-// backend arrives, swap the `export { ... } from` source below for a fetch/API
-// implementation with the same function names and the UI stays untouched.
+// Every page talks to this module (never to the database directly). The
+// current backend is Supabase; swap the `export { ... } from` source below for
+// another implementation with the same function names and the UI stays
+// untouched.
 // ---------------------------------------------------------------------------
 
 export type VocabEntry = {
@@ -62,4 +63,4 @@ export {
   listLists,
   getList,
   saveList,
-} from "./bookshelf.indexeddb";
+} from "./bookshelf.supabase";

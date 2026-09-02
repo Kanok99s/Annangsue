@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { useVocab } from "@/lib/vocab";
+import { useAuth } from "@/components/AuthProvider";
 import { LANGS, splitDirection, type Direction, type Lang } from "@/lib/lang";
 
 export type { Direction } from "@/lib/lang";
@@ -37,6 +38,7 @@ export function Header({
   onDirectionChange?: (d: Direction) => void;
 }) {
   const { totalCount } = useVocab();
+  const { user, signOut } = useAuth();
 
   return (
     <div className="border-b border-border">
@@ -96,6 +98,17 @@ export function Header({
           >
             V
           </Link>
+          <div className="flex items-center gap-3 border-l border-border pl-4">
+            <span className="hidden max-w-40 truncate text-xs text-mute lg:block">
+              {user?.email}
+            </span>
+            <button
+              onClick={() => void signOut()}
+              className="text-xs font-semibold text-mute transition-colors hover:text-foreground"
+            >
+              Sign out
+            </button>
+          </div>
         </div>
       </div>
     </div>

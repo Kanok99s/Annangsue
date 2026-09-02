@@ -9,8 +9,10 @@ imports an EPUB, shows it side by side with a machine translation
 (EN/JA/KO/SV), lets readers tap words to save vocabulary, and provides study
 drills over the saved words.
 
-No backend database or account system: books are parsed in the browser, and
-saved vocabulary lives in `localStorage`.
+**Supabase** is the backend: email/password auth, and each account's parsed
+books + vocabulary lists are stored in Postgres behind row-level security.
+There is no anonymous access — the app is a signed-in wall (see
+`src/components/AuthProvider.tsx` and `src/routes/login.tsx`).
 
 ## Stack
 
@@ -26,12 +28,15 @@ saved vocabulary lives in `localStorage`.
 
 | Path | Purpose |
 | --- | --- |
-| `src/routes/` | File-based routes — `index.tsx` (reader), `study.tsx`, `vocabulary.tsx` |
-| `src/components/` | Shared React components (e.g. `Header.tsx`) |
+| `src/routes/` | File-based routes — `index.tsx` (reader), `study.tsx`, `vocabulary.tsx`, `login.tsx` |
+| `src/components/` | Shared React components (e.g. `Header.tsx`, `AuthProvider.tsx`) |
 | `src/lib/epub.ts` | EPUB parsing (JSZip) → `ParsedBook` of plain-text pages |
 | `src/lib/translate.functions.ts` | Server functions: full-page translation, word lookup, example sentences (keyless public APIs) |
-| `src/lib/vocab.ts` | `localStorage`-backed vocabulary store + drill logic + speech |
+| `src/lib/bookshelf.ts` | Data-layer facade + shared types; pages only ever import this module |
+| `src/lib/bookshelf.supabase.ts` | Supabase implementation of the bookshelf (books + lists tables) |
+| `src/lib/vocab.ts` | Per-book vocabulary store + drill logic + speech |
 | `src/lib/lang.ts` | Language codes/directions and script helpers |
+| `src/integrations/supabase/client.ts` | Supabase client singleton |
 | `src/lib/error-capture.ts`, `error-page.ts`, `server.ts` | SSR error logging / fallback error page |
 | `src/routeTree.gen.ts` | Auto-generated route tree — never edit by hand |
 
