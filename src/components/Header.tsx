@@ -45,7 +45,6 @@ export function Header({
           <Link to="/" className="font-serif text-2xl font-extrabold tracking-tight">
             Annangsue
           </Link>
-          <span className="text-xs uppercase tracking-[0.25em] text-mute">Study</span>
         </div>
 
         {direction && onDirectionChange ? (
