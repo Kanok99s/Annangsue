@@ -5,7 +5,12 @@ import { toast } from "sonner";
 
 import { Header, type Direction } from "@/components/Header";
 import { parseEpub, type ParsedBook } from "@/lib/epub";
-import { lookupWord, translatePage, type WordLookup } from "@/lib/translate.functions";
+import {
+  lookupWord,
+  translatePage,
+  type AlignSpan,
+  type WordLookup,
+} from "@/lib/translate.functions";
 import { speak, useVocab } from "@/lib/vocab";
 
 export const Route = createFileRoute("/")({
@@ -98,12 +103,60 @@ function tokenize(text: string, japanese: boolean): Token[] {
   }));
 }
 
+/** Non-blank paragraphs, used to keep source/target panes and alignment in lock-step. */
+function paragraphTexts(text: string): string[] {
+  return text.split(/\n{2,}/).filter((p) => p.trim().length > 0);
+}
+
+/**
+ * The exact tokens sent to the translator for one paragraph: every non-space
+ * token (words and punctuation), whitespace-trimmed. Azure then indexes source
+ * "words" by position in this list, so index N always means the Nth token.
+ */
+function mtTokens(text: string, japanese: boolean): string[] {
+  return tokenize(text, japanese)
+    .map((t) => t.text.trim())
+    .filter((t) => t.length > 0);
+}
+
+type AlignedToken = Token & { start: number; end: number };
+
+/** Tokenize a paragraph and annotate each token with its character range. */
+function tokenizeWithRanges(text: string, japanese: boolean): AlignedToken[] {
+  const tokens = tokenize(text, japanese);
+  let offset = 0;
+  return tokens.map((token) => {
+    const start = offset;
+    offset += token.text.length;
+    return { ...token, start, end: offset };
+  });
+}
+
+type ParaTokens = { text: string; tokens: AlignedToken[]; sent: number[] };
+
+/** Pre-tokenize a page's paragraphs with per-token source-word indexes. */
+function tokenizeParagraphs(text: string, japanese: boolean): ParaTokens[] {
+  return paragraphTexts(text).map((paragraph) => {
+    const tokens = tokenizeWithRanges(paragraph, japanese);
+    const sent: number[] = [];
+    let next = 0;
+    for (const token of tokens) {
+      sent.push(token.text.trim().length > 0 ? next++ : -1);
+    }
+    return { text: paragraph, tokens, sent };
+  });
+}
+
 function ReaderPage() {
   const [direction, setDirection] = useState<Direction>("ja-en");
   const [book, setBook] = useState<ParsedBook | null>(null);
   const [pageIndex, setPageIndex] = useState(0);
   const [translation, setTranslation] = useState("");
+  const [alignment, setAlignment] = useState<AlignSpan[][] | null>(null);
   const [translating, setTranslating] = useState(false);
+  const [hover, setHover] = useState<{ side: "src" | "tgt"; para: number; token: number } | null>(
+    null,
+  );
   const [selected, setSelected] = useState<{ word: string; data?: WordLookup; loading: boolean } | null>(
     null,
   );
@@ -120,13 +173,77 @@ function ReaderPage() {
 
   const savedTerms = useMemo(() => new Set(entries.map((e) => e.term.toLowerCase())), [entries]);
 
+  // Token streams for both panes, kept in lock-step with the token indexes the
+  // translation request sent to the server (source) and Azure's returned
+  // character offsets (target).
+  const srcParas = useMemo(
+    () => (page ? tokenizeParagraphs(page.text, sourceIsJapanese) : []),
+    [page, sourceIsJapanese],
+  );
+  const tgtParas = useMemo(
+    () => (translation ? tokenizeParagraphs(translation, !sourceIsJapanese) : []),
+    [translation, sourceIsJapanese],
+  );
+
+  // Cross-pane highlights: a hovered token in one pane marks its equivalent
+  // token(s) in the other pane using the Azure alignment data.
+  const highlight = useMemo(() => {
+    const src = new Map<number, Set<number>>();
+    const tgt = new Map<number, Set<number>>();
+    if (!hover || !alignment) return { src, tgt };
+
+    const { side, para, token } = hover;
+    const source = srcParas[para];
+    const target = tgtParas[para];
+    const spans = alignment[para];
+    if (!source || !target || !spans) return { src, tgt };
+
+    const mark = (map: Map<number, Set<number>>, t: number) => {
+      let set = map.get(para);
+      if (!set) {
+        set = new Set();
+        map.set(para, set);
+      }
+      set.add(t);
+    };
+
+    if (side === "src") {
+      const s = source.sent[token];
+      if (s === undefined || s < 0) return { src, tgt };
+      mark(src, token);
+      for (const span of spans) {
+        if (span.s !== s) continue;
+        target.tokens.forEach((t, i) => {
+          if (span.start <= t.end - 1 && span.end >= t.start) mark(tgt, i);
+        });
+      }
+      return { src, tgt };
+    }
+
+    const range = target.tokens[token];
+    if (!range) return { src, tgt };
+    mark(tgt, token);
+    for (const span of spans) {
+      if (!(span.start <= range.end - 1 && span.end >= range.start)) continue;
+      source.sent.forEach((s, i) => {
+        if (s === span.s) mark(src, i);
+      });
+    }
+    return { src, tgt };
+  }, [hover, alignment, srcParas, tgtParas]);
+
   const translateCurrent = useCallback(
     async (text: string, dir: Direction) => {
+      const japanese = dir === "ja-en";
+      const paragraphs = paragraphTexts(text).map((p) => mtTokens(p, japanese));
       setTranslating(true);
       setTranslation("");
+      setAlignment(null);
+      setHover(null);
       try {
-        const res = await doTranslate({ data: { text, direction: dir } });
+        const res = await doTranslate({ data: { text, direction: dir, paragraphs } });
         setTranslation(res.translation);
+        setAlignment(res.alignment);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Translation failed.");
       } finally {
@@ -320,30 +437,36 @@ function ReaderPage() {
                 <div
                   className={`text-[19px] ${sourceIsJapanese ? "font-jp leading-[2.1]" : "font-serif leading-[1.95]"}`}
                 >
-                  {page.text.split(/\n{2,}/).map((para, pi) => (
+                  {srcParas.map((para, pi) => (
                     <p key={pi} className={pi ? "mt-5" : ""}>
-                      {tokenize(para, sourceIsJapanese).map((token, ti) =>
-                        token.word ? (
+                      {para.tokens.map((token, ti) => {
+                        if (!token.word) return <span key={ti}>{token.text}</span>;
+                        const highlighted = highlight.src.get(pi)?.has(ti);
+                        const saved = savedTerms.has(token.text.toLowerCase());
+                        return (
                           <span
                             key={ti}
                             role="button"
                             tabIndex={0}
-                            onClick={() => void onWordClick(token.text, para)}
+                            onClick={() => void onWordClick(token.text, para.text)}
                             onKeyDown={(e) =>
-                              e.key === "Enter" && void onWordClick(token.text, para)
+                              e.key === "Enter" && void onWordClick(token.text, para.text)
                             }
-                            className={
-                              savedTerms.has(token.text.toLowerCase())
+                            onMouseEnter={() => alignment && setHover({ side: "src", para: pi, token: ti })}
+                            onMouseLeave={() => alignment && setHover(null)}
+                            className={[
+                              highlighted ? "align-hl" : "",
+                              saved
                                 ? "word-token-saved cursor-pointer"
-                                : "word-token hover:text-accent"
-                            }
+                                : "word-token hover:text-accent",
+                            ]
+                              .filter(Boolean)
+                              .join(" ")}
                           >
                             {token.text}
                           </span>
-                        ) : (
-                          <span key={ti}>{token.text}</span>
-                        ),
-                      )}
+                        );
+                      })}
                     </p>
                   ))}
                 </div>
@@ -387,9 +510,22 @@ function ReaderPage() {
                 <div
                   className={`text-[19px] ${sourceIsJapanese ? "font-serif leading-[1.95]" : "font-jp leading-[2.1]"}`}
                 >
-                  {translation.split(/\n{2,}/).map((para, i) => (
-                    <p key={i} className={i ? "mt-5" : ""}>
-                      {para}
+                  {tgtParas.map((para, pi) => (
+                    <p key={pi} className={pi ? "mt-5" : ""}>
+                      {para.tokens.map((token, ti) => {
+                        if (!token.word) return <span key={ti}>{token.text}</span>;
+                        const highlighted = highlight.tgt.get(pi)?.has(ti);
+                        return (
+                          <span
+                            key={ti}
+                            onMouseEnter={() => alignment && setHover({ side: "tgt", para: pi, token: ti })}
+                            onMouseLeave={() => alignment && setHover(null)}
+                            className={highlighted ? "align-hl" : ""}
+                          >
+                            {token.text}
+                          </span>
+                        );
+                      })}
                     </p>
                   ))}
                 </div>
@@ -400,7 +536,9 @@ function ReaderPage() {
               )}
 
               <div className="mt-7 flex items-center justify-between border-t border-border pt-5 text-sm">
-                <span className="text-mute">Whole page, translated each turn</span>
+                <span className="text-mute">
+                  {alignment ? "Hover any word to see its match" : "Whole page, translated each turn"}
+                </span>
                 <button
                   onClick={() =>
                     translation && speak(translation, sourceIsJapanese ? "en-US" : "ja-JP")

@@ -13,6 +13,9 @@ import type { Lang } from "@/lib/lang";
 const MYMEMORY_ENDPOINT = "https://api.mymemory.translated.net/get";
 const JISHO_ENDPOINT = "https://jisho.org/api/v1/search/words";
 const TATOEBA_SEARCH = "https://tatoeba.org/en/api_v0/search";
+// Microsoft Translator (Azure Cognitive Services). The app runs keyless on
+// MyMemory; set MICROSOFT_TRANSLATOR_KEY to get word-aligned translations.
+const AZURE_TRANSLATE_ENDPOINT = "https://api.cognitive.microsofttranslator.com/translate";
 
 /** ISO-639-1 codes used by the app (matches MyMemory's language codes 1:1). */
 const DirectionSchema = z.string().regex(/^(en|ja|ko|sv)-(en|ja|ko|sv)$/);
@@ -22,9 +25,19 @@ const REQUEST_TIMEOUT_MS = 20_000;
 // Tatoeba's language codes are ISO-639-3 (jpn/eng/…).
 const TATOEBA_LANG = { en: "eng", ja: "jpn" } as const;
 
+/** One Azure alignment projection: source word index → target character range. */
+export type AlignSpan = { s: number; start: number; end: number };
+
+export type PageTranslation = {
+  translation: string;
+  /** Per-paragraph alignment (index = paragraph index); null when the
+   *  active translation provider has no alignment data. */
+  alignment: AlignSpan[][] | null;
+};
+
 // Small in-memory caches so re-translating the same page (e.g. after a
 // reload + re-drop) or re-tapping a word doesn't burn API quota.
-const translateCache = new Map<string, string>();
+const translateCache = new Map<string, PageTranslation>();
 const TRANSLATE_CACHE_MAX = 100;
 const lookupCache = new Map<string, WordLookup>();
 const LOOKUP_CACHE_MAX = 200;
@@ -395,20 +408,149 @@ function isJapaneseText(text: string): boolean {
 // Server functions
 // ---------------------------------------------------------------------------
 
-/** Translate a full page of text, preserving blank-line paragraph breaks. */
+// ---------------------------------------------------------------------------
+// Microsoft Translator — page translation with word alignment
+// ---------------------------------------------------------------------------
+//
+// Used when MICROSOFT_TRANSLATOR_KEY is set. Each request element is one source
+// paragraph; the client sends it already split into the exact tokens it will
+// render, and we send those tokens space-separated (CJK included) so Azure's
+// per-element "proj" word indexes map 1:1 onto the rendered tokens.
+
+/** "0:0-1,1:3-6" → source word index → target char range (inclusive). */
+function parseAlignmentProj(proj: unknown): AlignSpan[] {
+  if (typeof proj !== "string") return [];
+  const spans: AlignSpan[] = [];
+  for (const part of proj.split(/[\s,]+/)) {
+    const match = /^(\d+):(\d+)(?:-(\d+))?$/.exec(part);
+    if (!match) continue;
+    const start = Number(match[2]);
+    const end = match[3] !== undefined ? Number(match[3]) : start;
+    spans.push({
+      s: Number(match[1]),
+      start: Math.min(start, end),
+      end: Math.max(start, end),
+    });
+  }
+  return spans;
+}
+
+async function translateWithMicrosoft(
+  paragraphs: string[][],
+  from: Lang,
+  to: Lang,
+): Promise<{ parts: string[]; alignment: AlignSpan[][] }> {
+  const key = process.env["MICROSOFT_TRANSLATOR_KEY"] ?? "";
+  const region = process.env["MICROSOFT_TRANSLATOR_REGION"] ?? "";
+  const params = new URLSearchParams({
+    "api-version": "3.0",
+    from,
+    to,
+    includeAlignment: "true",
+  });
+
+  let response: Response;
+  try {
+    response = await fetch(`${AZURE_TRANSLATE_ENDPOINT}?${params.toString()}`, {
+      method: "POST",
+      headers: {
+        "Ocp-Apim-Subscription-Key": key,
+        "Content-Type": "application/json",
+        ...(region ? { "Ocp-Apim-Subscription-Region": region } : {}),
+      },
+      body: JSON.stringify(paragraphs.map((tokens) => ({ Text: tokens.join(" ") }))),
+      signal: withTimeout(30_000),
+    });
+  } catch {
+    throw new Error("The translation service could not be reached.");
+  }
+
+  if (!response.ok) {
+    const detail = (await response.json().catch(() => null)) as {
+      error?: { message?: string };
+    } | null;
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(
+        "Microsoft Translator rejected the API key — check MICROSOFT_TRANSLATOR_KEY" +
+          (region ? " and MICROSOFT_TRANSLATOR_REGION" : "") +
+          ".",
+      );
+    }
+    throw new Error(
+      detail?.error?.message ??
+        `The translation service failed (${response.status}).`,
+    );
+  }
+
+  const results = (await response.json().catch(() => null)) as
+    | { translations?: { text?: unknown; alignment?: { proj?: unknown } }[] }[]
+    | null;
+  if (!Array.isArray(results) || results.length !== paragraphs.length) {
+    throw new Error("The translation service returned an unexpected response.");
+  }
+
+  const parts: string[] = [];
+  const alignment: AlignSpan[][] = [];
+  for (const result of results) {
+    const translation = result?.translations?.[0];
+    const text = typeof translation?.text === "string" ? translation.text : "";
+    if (!text) throw new Error("The translation service returned an empty result.");
+    parts.push(text);
+    alignment.push(parseAlignmentProj(translation?.alignment?.proj));
+  }
+  return { parts, alignment };
+}
+
+/** Translate a whole page of text, preserving blank-line paragraph breaks. */
 export const translatePage = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) =>
-    z.object({ text: z.string().min(1).max(6000), direction: DirectionSchema }).parse(input),
+    z
+      .object({
+        text: z.string().min(1).max(6000),
+        direction: DirectionSchema,
+        // Per-paragraph token streams (used for word alignment). Indices must
+        // match the tokens the client renders for each paragraph.
+        paragraphs: z
+          .array(z.array(z.string().min(1).max(1000)).max(4000))
+          .min(1)
+          .max(200)
+          .optional(),
+      })
+      .parse(input),
   )
   .handler(async ({ data }) => {
     const [source, target] = data.direction.split("-") as [Lang, Lang];
     const cacheKey = `${data.direction}\u0000${data.text}`;
     const cached = cacheGet(translateCache, cacheKey);
-    if (cached !== undefined) return { translation: cached };
+    if (cached !== undefined) return cached;
 
-    const translation = await translateWithMyMemory(data.text, source, target);
-    cachePut(translateCache, cacheKey, translation, TRANSLATE_CACHE_MAX);
-    return { translation };
+    const hasMicrosoftKey = Boolean(process.env["MICROSOFT_TRANSLATOR_KEY"]);
+
+    if (!hasMicrosoftKey) {
+      const result: PageTranslation = {
+        translation: await translateWithMyMemory(data.text, source, target),
+        alignment: null,
+      };
+      cachePut(translateCache, cacheKey, result, TRANSLATE_CACHE_MAX);
+      return result;
+    }
+
+    // Fall back to whitespace tokenization if a caller didn't send paragraphs.
+    const paragraphs =
+      data.paragraphs && data.paragraphs.length > 0
+        ? data.paragraphs
+        : data.text
+            .split(/\n{2,}/)
+            .map((p) => p.trim().split(/\s+/))
+            .filter((tokens) => tokens.length > 0);
+
+    const { parts, alignment } = await translateWithMicrosoft(paragraphs, source, target);
+    const result: PageTranslation = {
+      translation: parts.join("\n\n"),
+      alignment,
+    };
+    cachePut(translateCache, cacheKey, result, TRANSLATE_CACHE_MAX);
+    return result;
   });
 
 const LookupSchema = z.object({

@@ -14,6 +14,8 @@ learners:
   the page.
 - **Side-by-side reading** — read the original page next to its translation,
   with configurable source/target language directions (EN ↔ JA/KO/SV).
+- **Hover-to-match** — hover a word in either pane and its equivalent in the
+  other pane lights up (via Microsoft Translator's word-alignment data).
 - **Tap-to-save vocabulary** — tap any word (Japanese chunks of kanji/kana or
   English words) to look it up against JMdict (via Jisho) and save it with its
   reading, meaning, part of speech and a real example sentence (Tatoeba).
@@ -23,7 +25,10 @@ learners:
   ready to review.
 
 Everything is stored locally (`localStorage`), and translation/dictionary
-requests use keyless public APIs (MyMemory, Jisho, Tatoeba).
+requests use keyless public APIs (MyMemory, Jisho, Tatoeba). Setting
+`MICROSOFT_TRANSLATOR_KEY` (free Azure tier) upgrades page translation to
+Microsoft Translator and enables the word-alignment hover feature; the app
+gracefully falls back to MyMemory when no key is present. See `.env.example`.
 
 ## Features
 
