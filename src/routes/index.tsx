@@ -5,7 +5,12 @@ import { toast } from "sonner";
 
 import { Header, type Direction } from "@/components/Header";
 import { parseEpub, type ParsedBook } from "@/lib/epub";
-import { lookupWord, translatePage, type WordLookup } from "@/lib/translate.functions";
+import {
+  lookupWord,
+  probeJotoba,
+  translatePage,
+  type WordLookup,
+} from "@/lib/translate.functions";
 import { speak, useVocab } from "@/lib/vocab";
 
 export const Route = createFileRoute("/")({
@@ -114,6 +119,19 @@ function ReaderPage() {
   const { entries, add } = useVocab();
   const doTranslate = useServerFn(translatePage);
   const doLookup = useServerFn(lookupWord);
+  const doProbe = useServerFn(probeJotoba);
+  const [probeResult, setProbeResult] = useState<string[] | null>(null);
+
+  // TEMP: probe the Jotoba request schema once on mount. Remove with probeJotoba.
+  useEffect(() => {
+    doProbe()
+      .then((res) => {
+        setProbeResult(res.out);
+        console.log("[jotoba-probe]\n" + res.out.join("\n"));
+      })
+      .catch((error) => console.error("[jotoba-probe]", error));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const page = book?.pages[pageIndex];
   const sourceIsJapanese = direction === "ja-en";
@@ -492,6 +510,13 @@ function ReaderPage() {
               ) : null}
             </div>
           </div>
+        )}
+
+        {/* TEMP: probe results — remove with probeJotoba */}
+        {probeResult && (
+          <pre className="fixed bottom-3 left-3 z-50 max-w-[min(90vw,32rem)] whitespace-pre-wrap rounded-md border border-border bg-background/95 p-3 font-mono text-[11px] leading-relaxed text-accent shadow-lg">
+            {probeResult.join("\n")}
+          </pre>
         )}
 
         {/* DRAG & DROP OVERLAY */}

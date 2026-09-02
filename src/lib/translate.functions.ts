@@ -449,3 +449,33 @@ export const lookupWord = createServerFn({ method: "POST" })
     cachePut(lookupCache, cacheKey, lookup, LOOKUP_CACHE_MAX);
     return lookup;
   });
+
+// TEMP: probe candidate Jotoba request shapes. Remove once the schema is fixed.
+export const probeJotoba = createServerFn({ method: "POST" }).handler(async () => {
+  const search = "血";
+  const candidates: { label: string; body: unknown }[] = [
+    { label: "nested query object", body: { query: { search, language: "Japanese" }, no_english: false } },
+    { label: "query string + language", body: { query: search, language: "Japanese", no_english: false } },
+    { label: "flat search + language", body: { search, language: "Japanese", no_english: false } },
+    { label: "query string only", body: { query: search } },
+    { label: "bare JSON string", body: search },
+  ];
+  const out: string[] = [];
+  for (const candidate of candidates) {
+    try {
+      const response = await fetch(JOTOBA_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(candidate.body),
+        signal: withTimeout(8_000),
+      });
+      const text = await response.text();
+      out.push(
+        `${candidate.label} -> ${response.status} ${text.replace(/\s+/g, " ").slice(0, 140)}`,
+      );
+    } catch (error) {
+      out.push(`${candidate.label} -> ERR ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return { out };
+});
