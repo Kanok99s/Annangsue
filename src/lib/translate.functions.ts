@@ -5,13 +5,13 @@ import type { Lang } from "@/lib/lang";
 
 // ---------------------------------------------------------------------------
 // Providers (all keyless — no API key required):
-//  - MyMemory  https://api.mymemory.translated.net  full-page translation
-//  - Jotoba    https://jotoba.de/api/search/words    dictionary lookups (JMdict)
-//  - Tatoeba   https://tatoeba.org/en/api_v0          example sentences
+//  - MyMemory  https://api.mymemory.translated.net      full-page translation
+//  - Jisho     https://jisho.org/api/v1/search/words    dictionary lookups (JMdict)
+//  - Tatoeba   https://tatoeba.org/en/api_v0            example sentences
 // ---------------------------------------------------------------------------
 
 const MYMEMORY_ENDPOINT = "https://api.mymemory.translated.net/get";
-const JOTOBA_ENDPOINT = "https://jotoba.de/api/search/words";
+const JISHO_ENDPOINT = "https://jisho.org/api/v1/search/words";
 const TATOEBA_SEARCH = "https://tatoeba.org/en/api_v0/search";
 
 /** ISO-639-1 codes used by the app (matches MyMemory's language codes 1:1). */
@@ -158,14 +158,20 @@ async function translateWithMyMemory(text: string, from: Lang, to: Lang): Promis
 }
 
 // ---------------------------------------------------------------------------
-// Jotoba — dictionary lookup
+// Jisho — dictionary lookup
 // ---------------------------------------------------------------------------
+//
+// Jisho serves JMdict through a stable, keyless JSON API with a single request
+// shape, so each lookup is exactly one GET (no payload probing needed). A
+// tapped word may be Japanese (we want its English senses) or English (we want
+// the Japanese headword whose glosses contain it) — both are keyword searches.
 
-type JotobaWord = {
-  reading?: { kanji?: unknown; kana?: unknown; word?: unknown };
-  common?: boolean;
-  is_common?: boolean;
-  senses?: { english?: unknown; part_of_speech?: unknown }[];
+type JishoForm = { word: string; reading: string };
+type DictEntry = {
+  forms: JishoForm[];
+  common: boolean;
+  english: string[];
+  partsOfSpeech: string[];
 };
 
 function toStr(value: unknown): string {
@@ -182,100 +188,90 @@ function strArray(value: unknown): string[] {
   return [];
 }
 
-// Jotoba's /api/search/words has shipped different request shapes over time
-// (older: { query: { search, language } }; newer deployments expect the query
-// as a plain string). Lookups are on-demand only (one POST per tapped word), so
-// we try known shapes in order on a schema rejection and then remember the one
-// that works — never probing the API ahead of time.
-type JotobaBody = { query?: unknown; search?: string; language?: string; no_english?: boolean };
+/** Normalize one /api/v1/search/words response body into headword entries. */
+function parseJishoResults(data: unknown): DictEntry[] {
+  if (!Array.isArray(data)) return [];
+  const entries: DictEntry[] = [];
 
-function jotobaBodies(search: string, language: "Japanese" | "English"): JotobaBody[] {
-  return [
-    { query: { search, language }, no_english: false },
-    { query: search, language, no_english: false },
-    { search, language, no_english: false },
-    { query: search },
-  ];
-}
+  for (const raw of data) {
+    if (!raw || typeof raw !== "object") continue;
+    const result = raw as { is_common?: unknown; japanese?: unknown; senses?: unknown };
 
-// Only a 400 that looks like a payload/schema complaint warrants retrying with
-// another shape; rate limits or server errors must not cause retry storms.
-function looksLikeSchemaRejection(status: number, body: string): boolean {
-  return status === 400 && /deserialize|invalid type|expected a (string|map|struct)/i.test(body);
-}
-
-let workingBodyIndex: number | null = null;
-
-async function jotobaSearch(search: string, language: "Japanese" | "English"): Promise<JotobaWord[]> {
-  const bodies = jotobaBodies(search, language);
-  const ordered =
-    workingBodyIndex !== null
-      ? [bodies[workingBodyIndex]!, ...bodies.filter((_, i) => i !== workingBodyIndex)]
-      : bodies;
-
-  let lastStatus = 0;
-  let lastBody = "";
-  for (const body of ordered) {
-    let response: Response;
-    try {
-      response = await fetch(JOTOBA_ENDPOINT, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: withTimeout(),
-      });
-    } catch {
-      throw new Error("The dictionary service could not be reached.");
-    }
-
-    if (response.ok) {
-      if (workingBodyIndex === null) {
-        workingBodyIndex = bodies.indexOf(body);
-        console.log(`[jotoba] schema accepted for ${language}, using body shape ${workingBodyIndex}`);
+    const forms: JishoForm[] = [];
+    if (Array.isArray(result.japanese)) {
+      for (const form of result.japanese) {
+        if (!form || typeof form !== "object") continue;
+        const f = form as { word?: unknown; reading?: unknown };
+        const word = typeof f.word === "string" ? f.word : "";
+        const reading = typeof f.reading === "string" ? f.reading : "";
+        if (word || reading) forms.push({ word, reading });
       }
-      const data = (await response.json().catch(() => null)) as { words?: unknown } | null;
-      if (!data || !Array.isArray(data.words)) return [];
-      return data.words.filter((w): w is JotobaWord => !!w && typeof w === "object");
     }
+    if (forms.length === 0) continue;
 
-    lastStatus = response.status;
-    lastBody = await response.text().catch(() => "");
-    if (!looksLikeSchemaRejection(response.status, lastBody)) break;
+    const english: string[] = [];
+    const partsOfSpeech: string[] = [];
+    if (Array.isArray(result.senses)) {
+      for (const sense of result.senses) {
+        if (!sense || typeof sense !== "object") continue;
+        const s = sense as { english_definitions?: unknown; parts_of_speech?: unknown };
+        for (const def of strArray(s.english_definitions)) {
+          if (!english.includes(def)) english.push(def);
+        }
+        for (const pos of strArray(s.parts_of_speech)) {
+          if (!partsOfSpeech.includes(pos)) partsOfSpeech.push(pos);
+        }
+      }
+    }
+    if (english.length === 0) continue; // a hit with no English gloss is useless
+
+    entries.push({ forms, common: result.is_common === true, english, partsOfSpeech });
+  }
+  return entries;
+}
+
+async function jishoSearch(search: string): Promise<DictEntry[]> {
+  let response: Response;
+  try {
+    response = await fetch(`${JISHO_ENDPOINT}?${new URLSearchParams({ keyword: search })}`, {
+      headers: { Accept: "application/json" },
+      signal: withTimeout(),
+    });
+  } catch {
+    throw new Error("The dictionary service could not be reached.");
   }
 
-  const hint = lastBody.trim().replace(/\s+/g, " ").slice(0, 160);
-  throw new Error(
-    hint
-      ? `The dictionary service failed (${lastStatus}): ${hint}`
-      : `The dictionary service failed (${lastStatus}).`,
-  );
-}
-
-function termOf(word: JotobaWord): string {
-  return toStr(word.reading?.kanji) || toStr(word.reading?.word) || toStr(word.reading?.kana);
-}
-
-function readingOf(word: JotobaWord): string {
-  return toStr(word.reading?.kana);
-}
-
-function englishSenses(word: JotobaWord): string[] {
-  const defs: string[] = [];
-  for (const sense of word.senses ?? []) {
-    defs.push(...strArray(sense.english));
+  if (response.status === 429) {
+    throw new Error("The dictionary is rate-limiting requests — wait a moment and tap again.");
   }
-  return defs;
+  if (!response.ok) {
+    throw new Error(`The dictionary service failed (${response.status}).`);
+  }
+
+  const payload = (await response.json().catch(() => null)) as
+    | { meta?: { status?: unknown }; data?: unknown }
+    | null;
+  if (!payload || payload.meta?.status !== 200) {
+    throw new Error("The dictionary service returned an unexpected response.");
+  }
+  return parseJishoResults(payload.data);
 }
 
-function partOfSpeechOf(word: JotobaWord): string {
-  const pos = word.senses?.[0]?.part_of_speech;
-  return strArray(pos)[0] ?? "";
+function termOf(entry: DictEntry): string {
+  return entry.forms.find((f) => f.word)?.word ?? entry.forms[0]?.reading ?? "";
 }
 
-function joinMeaning(word: JotobaWord): string {
-  const defs = englishSenses(word);
+function readingOf(entry: DictEntry): string {
+  return entry.forms.find((f) => f.reading)?.reading ?? "";
+}
+
+function partOfSpeechOf(entry: DictEntry): string {
+  return entry.partsOfSpeech[0] ?? "";
+}
+
+function joinMeaning(entry: DictEntry): string {
   let meaning = "";
-  for (const def of defs) {
+  for (const def of entry.english) {
     const next = meaning ? `${meaning}, ${def}` : def;
     if (next.length > 300) break;
     meaning = next;
@@ -287,14 +283,14 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** Score how strongly an English tap matches a Jotoba word’s glosses. */
-function scoreEnglishMatch(word: JotobaWord, query: string): number {
+/** Score how strongly an English tap matches an entry’s glosses. */
+function scoreEnglishMatch(entry: DictEntry, query: string): number {
   const re = new RegExp(
     `(^|[^\\p{L}\\p{N}])${escapeRegExp(query)}([^\\p{L}\\p{N}]|$)`,
     "iu",
   );
   let best = 0;
-  for (const def of englishSenses(word)) {
+  for (const def of entry.english) {
     if (re.test(def)) {
       const atStart = new RegExp(`^${escapeRegExp(query)}([^\\p{L}\\p{N}]|$)`, "iu").test(def);
       best = Math.max(best, atStart ? 2 : 1);
@@ -303,39 +299,39 @@ function scoreEnglishMatch(word: JotobaWord, query: string): number {
   return best;
 }
 
-function pickJapaneseWord(words: JotobaWord[], query: string): JotobaWord | undefined {
-  let exact: JotobaWord | undefined;
-  let exactKana: JotobaWord | undefined;
-  for (const word of words) {
-    const term = termOf(word);
-    if (term === query) {
-      if (!exact) exact = word;
-      continue;
-    }
-    if (!exact && readingOf(word) === query && !exactKana) exactKana = word;
-  }
-  if (exact || exactKana) {
-    const candidate = exact ?? exactKana!;
-    const common = words.find(
-      (w) => termOf(w) === termOf(candidate) && (w.common || w.is_common),
-    );
-    return common ?? candidate;
-  }
-  return (
-    words.find((w) => w.common || w.is_common) ?? words.find((w) => termOf(w) === query) ?? words[0]
-  );
+function commonFirst(entries: DictEntry[]): DictEntry | undefined {
+  return entries.find((e) => e.common) ?? entries[0];
 }
 
-function pickEnglishWord(words: JotobaWord[], query: string): JotobaWord | undefined {
-  const scored = words
-    .map((word) => ({ word, score: scoreEnglishMatch(word, query) }))
+/** Prefer the entry that is exactly the tapped Japanese word (then reading). */
+function pickJapaneseWord(entries: DictEntry[], query: string): DictEntry | undefined {
+  const byTerm: DictEntry[] = [];
+  const byReading: DictEntry[] = [];
+  for (const entry of entries) {
+    if (entry.forms.some((f) => f.word === query)) byTerm.push(entry);
+    else if (entry.forms.some((f) => f.reading === query)) byReading.push(entry);
+  }
+  if (byTerm.length > 0) return commonFirst(byTerm);
+  if (byReading.length > 0) return commonFirst(byReading);
+
+  // No exact headword came back — Jisho still lists compounds containing the
+  // query, so prefer the closest headword over an arbitrary first hit.
+  const closest = entries.find(
+    (e) => termOf(e).startsWith(query) || readingOf(e).startsWith(query),
+  );
+  return closest ?? commonFirst(entries);
+}
+
+/** For an English tap, find the Japanese headword whose glosses contain it. */
+function pickEnglishWord(entries: DictEntry[], query: string): DictEntry | undefined {
+  const scored = entries
+    .map((entry) => ({ entry, score: scoreEnglishMatch(entry, query) }))
     .filter((s) => s.score > 0)
     .sort((a, b) => {
-      const commonDiff =
-        Number(b.word.common || b.word.is_common) - Number(a.word.common || a.word.is_common);
+      const commonDiff = Number(b.entry.common) - Number(a.entry.common);
       return commonDiff !== 0 ? commonDiff : b.score - a.score;
     });
-  return scored[0]?.word;
+  return scored[0]?.entry;
 }
 
 // ---------------------------------------------------------------------------
@@ -451,10 +447,8 @@ export const lookupWord = createServerFn({ method: "POST" })
     const cached = cacheGet(lookupCache, cacheKey);
     if (cached !== undefined) return cached;
 
-    const results = await jotobaSearch(word, japanese ? "Japanese" : "English");
-    const entry = japanese
-      ? pickJapaneseWord(results, word)
-      : pickEnglishWord(results, word);
+    const results = await jishoSearch(word);
+    const entry = japanese ? pickJapaneseWord(results, word) : pickEnglishWord(results, word);
 
     if (!entry) {
       throw new Error(`No dictionary entry found for “${word}”.`);

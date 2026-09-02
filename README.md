@@ -15,7 +15,7 @@ learners:
 - **Side-by-side reading** — read the original page next to its translation,
   with configurable source/target language directions (EN ↔ JA/KO/SV).
 - **Tap-to-save vocabulary** — tap any word (Japanese chunks of kanji/kana or
-  English words) to look it up against JMdict (via Jotoba) and save it with its
+  English words) to look it up against JMdict (via Jisho) and save it with its
   reading, meaning, part of speech and a real example sentence (Tatoeba).
 - **Study drills** — drill your saved words three ways: word recognition,
   kanji reading, and listening (pick the correct answer by ear).
@@ -23,7 +23,7 @@ learners:
   ready to review.
 
 Everything is stored locally (`localStorage`), and translation/dictionary
-requests use keyless public APIs (MyMemory, Jotoba, Tatoeba).
+requests use keyless public APIs (MyMemory, Jisho, Tatoeba).
 
 ## Features
 
