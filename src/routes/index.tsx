@@ -108,17 +108,6 @@ function paragraphTexts(text: string): string[] {
   return text.split(/\n{2,}/).filter((p) => p.trim().length > 0);
 }
 
-/**
- * The exact tokens sent to the translator for one paragraph: every non-space
- * token (words and punctuation), whitespace-trimmed. Azure then indexes source
- * "words" by position in this list, so index N always means the Nth token.
- */
-function mtTokens(text: string, japanese: boolean): string[] {
-  return tokenize(text, japanese)
-    .map((t) => t.text.trim())
-    .filter((t) => t.length > 0);
-}
-
 type AlignedToken = Token & { start: number; end: number };
 
 /** Tokenize a paragraph and annotate each token with its character range. */
@@ -132,19 +121,19 @@ function tokenizeWithRanges(text: string, japanese: boolean): AlignedToken[] {
   });
 }
 
-type ParaTokens = { text: string; tokens: AlignedToken[]; sent: number[] };
+type ParaTokens = { text: string; tokens: AlignedToken[] };
 
-/** Pre-tokenize a page's paragraphs with per-token source-word indexes. */
+/** Pre-tokenize a page's paragraphs into character-ranged tokens. */
 function tokenizeParagraphs(text: string, japanese: boolean): ParaTokens[] {
-  return paragraphTexts(text).map((paragraph) => {
-    const tokens = tokenizeWithRanges(paragraph, japanese);
-    const sent: number[] = [];
-    let next = 0;
-    for (const token of tokens) {
-      sent.push(token.text.trim().length > 0 ? next++ : -1);
-    }
-    return { text: paragraph, tokens, sent };
-  });
+  return paragraphTexts(text).map((paragraph) => ({
+    text: paragraph,
+    tokens: tokenizeWithRanges(paragraph, japanese),
+  }));
+}
+
+/** True when token range [start, end) intersects inclusive span range [lo, hi]. */
+function spanHits(start: number, end: number, lo: number, hi: number): boolean {
+  return start <= hi && end - 1 >= lo;
 }
 
 function ReaderPage() {
@@ -173,9 +162,8 @@ function ReaderPage() {
 
   const savedTerms = useMemo(() => new Set(entries.map((e) => e.term.toLowerCase())), [entries]);
 
-  // Token streams for both panes, kept in lock-step with the token indexes the
-  // translation request sent to the server (source) and Azure's returned
-  // character offsets (target).
+  // Character-ranged token streams for both panes. Azure alignment spans use
+  // the same character offsets, so ranges here map directly onto them.
   const srcParas = useMemo(
     () => (page ? tokenizeParagraphs(page.text, sourceIsJapanese) : []),
     [page, sourceIsJapanese],
@@ -186,7 +174,7 @@ function ReaderPage() {
   );
 
   // Cross-pane highlights: a hovered token in one pane marks its equivalent
-  // token(s) in the other pane using the Azure alignment data.
+  // token(s) in the other pane using the Azure alignment ranges.
   const highlight = useMemo(() => {
     const src = new Map<number, Set<number>>();
     const tgt = new Map<number, Set<number>>();
@@ -208,25 +196,28 @@ function ReaderPage() {
     };
 
     if (side === "src") {
-      const s = source.sent[token];
-      if (s === undefined || s < 0) return { src, tgt };
+      // Hovered source token self-highlights, plus every target token covered
+      // by the spans that include the hovered source characters.
+      const range = source.tokens[token];
+      if (!range) return { src, tgt };
       mark(src, token);
       for (const span of spans) {
-        if (span.s !== s) continue;
+        if (!spanHits(range.start, range.end, span.ss, span.se)) continue;
         target.tokens.forEach((t, i) => {
-          if (span.start <= t.end - 1 && span.end >= t.start) mark(tgt, i);
+          if (spanHits(t.start, t.end, span.ts, span.te)) mark(tgt, i);
         });
       }
       return { src, tgt };
     }
 
+    // Mirror image for a hovered translation token.
     const range = target.tokens[token];
     if (!range) return { src, tgt };
     mark(tgt, token);
     for (const span of spans) {
-      if (!(span.start <= range.end - 1 && span.end >= range.start)) continue;
-      source.sent.forEach((s, i) => {
-        if (s === span.s) mark(src, i);
+      if (!spanHits(range.start, range.end, span.ts, span.te)) continue;
+      source.tokens.forEach((s, i) => {
+        if (spanHits(s.start, s.end, span.ss, span.se)) mark(src, i);
       });
     }
     return { src, tgt };
@@ -234,8 +225,9 @@ function ReaderPage() {
 
   const translateCurrent = useCallback(
     async (text: string, dir: Direction) => {
-      const japanese = dir === "ja-en";
-      const paragraphs = paragraphTexts(text).map((p) => mtTokens(p, japanese));
+      // Send paragraphs verbatim (same strings the panes render) so Azure's
+      // alignment character offsets map 1:1 onto the rendered text.
+      const paragraphs = paragraphTexts(text);
       setTranslating(true);
       setTranslation("");
       setAlignment(null);

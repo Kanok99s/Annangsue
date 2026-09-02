@@ -25,8 +25,13 @@ const REQUEST_TIMEOUT_MS = 20_000;
 // Tatoeba's language codes are ISO-639-3 (jpn/eng/…).
 const TATOEBA_LANG = { en: "eng", ja: "jpn" } as const;
 
-/** One Azure alignment projection: source word index → target character range. */
-export type AlignSpan = { s: number; start: number; end: number };
+/**
+ * One Azure alignment projection: an inclusive character range in the source
+ * paragraph ([ss, se]) mapped to an inclusive character range in the returned
+ * translation ([ts, te]). Both ranges are offsets into the exact strings that
+ * were sent to / returned from the API.
+ */
+export type AlignSpan = { ss: number; se: number; ts: number; te: number };
 
 export type PageTranslation = {
   translation: string;
@@ -413,30 +418,32 @@ function isJapaneseText(text: string): boolean {
 // ---------------------------------------------------------------------------
 //
 // Used when MICROSOFT_TRANSLATOR_KEY is set. Each request element is one source
-// paragraph; the client sends it already split into the exact tokens it will
-// render, and we send those tokens space-separated (CJK included) so Azure's
-// per-element "proj" word indexes map 1:1 onto the rendered tokens.
+// paragraph, sent verbatim (natural spacing — CJK included) so that Azure's
+// "proj" character ranges line up exactly with the text the client renders and
+// tokenizes. Azure emits one projection per aligned fragment:
+//   "0:0-0:2 4:6-27:29"  →  source chars [0,0] ↔ target chars [0,2],
+//                           source chars [4,6] ↔ target chars [27,29]
+// (both ranges inclusive).
 
-/** "0:0-1,1:3-6" → source word index → target char range (inclusive). */
+/** Parse Azure's proj alignment string into source→target character ranges. */
 function parseAlignmentProj(proj: unknown): AlignSpan[] {
   if (typeof proj !== "string") return [];
   const spans: AlignSpan[] = [];
   for (const part of proj.split(/[\s,]+/)) {
-    const match = /^(\d+):(\d+)(?:-(\d+))?$/.exec(part);
+    const match = /^(\d+):(\d+)-(\d+):(\d+)$/.exec(part);
     if (!match) continue;
-    const start = Number(match[2]);
-    const end = match[3] !== undefined ? Number(match[3]) : start;
     spans.push({
-      s: Number(match[1]),
-      start: Math.min(start, end),
-      end: Math.max(start, end),
+      ss: Number(match[1]),
+      se: Number(match[2]),
+      ts: Number(match[3]),
+      te: Number(match[4]),
     });
   }
   return spans;
 }
 
 async function translateWithMicrosoft(
-  paragraphs: string[][],
+  paragraphs: string[],
   from: Lang,
   to: Lang,
 ): Promise<{ parts: string[]; alignment: AlignSpan[][] }> {
@@ -458,7 +465,7 @@ async function translateWithMicrosoft(
         "Content-Type": "application/json",
         ...(region ? { "Ocp-Apim-Subscription-Region": region } : {}),
       },
-      body: JSON.stringify(paragraphs.map((tokens) => ({ Text: tokens.join(" ") }))),
+      body: JSON.stringify(paragraphs.map((text) => ({ Text: text }))),
       signal: withTimeout(30_000),
     });
   } catch {
@@ -508,10 +515,11 @@ export const translatePage = createServerFn({ method: "POST" })
       .object({
         text: z.string().min(1).max(6000),
         direction: DirectionSchema,
-        // Per-paragraph token streams (used for word alignment). Indices must
-        // match the tokens the client renders for each paragraph.
+        // Per-paragraph source text, sent to Azure verbatim so its alignment
+        // character offsets match the strings the client renders. Each element
+        // corresponds 1:1 to a paragraph in `text`.
         paragraphs: z
-          .array(z.array(z.string().min(1).max(1000)).max(4000))
+          .array(z.string().min(1).max(6000))
           .min(1)
           .max(200)
           .optional(),
@@ -535,14 +543,15 @@ export const translatePage = createServerFn({ method: "POST" })
       return result;
     }
 
-    // Fall back to whitespace tokenization if a caller didn't send paragraphs.
+    // Callers normally send pre-split paragraphs (verbatim) so Azure's offsets
+    // line up with what they render; fall back to a plain split otherwise.
     const paragraphs =
       data.paragraphs && data.paragraphs.length > 0
         ? data.paragraphs
         : data.text
             .split(/\n{2,}/)
-            .map((p) => p.trim().split(/\s+/))
-            .filter((tokens) => tokens.length > 0);
+            .map((p) => p.trim())
+            .filter(Boolean);
 
     const { parts, alignment } = await translateWithMicrosoft(paragraphs, source, target);
     const result: PageTranslation = {

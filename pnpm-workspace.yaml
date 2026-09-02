@@ -1,4 +1,9 @@
 allowBuilds:
+  # dyad-default-allow-builds begin
+  # dyad-default-allow-builds-schema=v1
+  # dyad-default-allow-builds-data-version=2026-07-08.1
+  # dyad-default-allow-builds-channel=remote
+  # dyad-default-allow-builds end
   "@airbnb/node-memwatch": true
   "@anthropic-ai/claude-code": true
   "@apollo/protobufjs": true
