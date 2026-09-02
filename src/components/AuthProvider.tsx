@@ -9,23 +9,36 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import type { User } from "@supabase/supabase-js";
 
 import { supabase } from "@/integrations/supabase/client";
+import { SignInDialog } from "@/components/SignInDialog";
 
 // ---------------------------------------------------------------------------
-// Session gate + auth context.
+// Auth context + sign-in prompt.
 //
-// The app is fully client-rendered behind a sign-in wall: while the session is
-// still being resolved we show a branded splash (this is also what SSR emits,
-// so hydration always matches), then redirect signed-out users to /login and
-// signed-in users away from /login into the app.
+// The app is NOT locked behind an account: everyone can upload a book, read it
+// side by side, and look words up. An account is only needed to *persist* —
+// saved words and a synced library. Signing in is offered at the point of
+// need via `askSignIn()`, which opens a dialog without navigating away (so a
+// guest's currently-open book and word are never lost).
 // ---------------------------------------------------------------------------
 
 type AuthContextValue = {
+  /** "loading" while the stored session is resolved on startup. */
+  status: "loading" | "ready";
   user: User | null;
+  /** Whether the sign-in prompt is currently open. */
+  promptOpen: boolean;
+  /** Opens the sign-in prompt. Pass a sentence describing why it's needed. */
+  askSignIn: (purpose?: string) => void;
+  closeSignIn: () => void;
   signOut: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue>({
+  status: "loading",
   user: null,
+  promptOpen: false,
+  askSignIn: () => {},
+  closeSignIn: () => {},
   signOut: async () => {},
 });
 
@@ -46,8 +59,10 @@ function Splash() {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const [phase, setPhase] = useState<"loading" | "ready">("loading");
+  const [status, setStatus] = useState<"loading" | "ready">("loading");
   const [user, setUser] = useState<User | null>(null);
+  // Non-null while the sign-in prompt is open; the string is the reason shown.
+  const [signInPrompt, setSignInPrompt] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -56,12 +71,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .then(({ data }) => {
         if (!active) return;
         setUser(data.session?.user ?? null);
-        setPhase("ready");
+        setStatus("ready");
       })
       .catch(() => {
         if (!active) return;
         setUser(null);
-        setPhase("ready");
+        setStatus("ready");
       });
 
     const {
@@ -69,7 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!active) return;
       setUser(session?.user ?? null);
-      setPhase("ready");
+      setStatus("ready");
     });
 
     return () => {
@@ -78,25 +93,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const onLoginRoute = pathname === "/login";
-
+  // The /login route is for signing in only — a signed-in user is sent home.
   useEffect(() => {
-    if (phase === "loading") return;
-    if (!user && !onLoginRoute) void navigate({ to: "/login" });
-    else if (user && onLoginRoute) void navigate({ to: "/" });
-  }, [phase, user, onLoginRoute, navigate]);
+    if (status !== "ready" || !user || pathname !== "/login") return;
+    void navigate({ to: "/" });
+  }, [status, user, pathname, navigate]);
 
-  // Only render protected pages once we know a session exists (and vice versa:
-  // render /login only while signed out). Everything else stays on the splash
-  // while a redirect lands.
-  const showApp = phase === "ready" && (user ? !onLoginRoute : onLoginRoute);
-  if (!showApp) return <Splash />;
+  // Signing in dismisses any pending prompt automatically.
+  useEffect(() => {
+    if (user) setSignInPrompt(null);
+  }, [user]);
+
+  // Everything below only renders once the session is known (SSR emits the
+  // splash too, so hydration never mismatches).
+  if (status === "loading") return <Splash />;
+
+  const askSignIn = (purpose?: string) => setSignInPrompt(purpose ?? "");
+  const closeSignIn = () => setSignInPrompt(null);
+  const signOut = async () => {
+    setSignInPrompt(null);
+    await supabase.auth.signOut();
+  };
 
   return (
     <AuthContext.Provider
-      value={{ user, signOut: async () => void (await supabase.auth.signOut()) }}
+      value={{
+        status,
+        user,
+        promptOpen: signInPrompt !== null,
+        askSignIn,
+        closeSignIn,
+        signOut,
+      }}
     >
       {children}
+      <SignInDialog
+        open={signInPrompt !== null}
+        purpose={signInPrompt ?? undefined}
+        onClose={closeSignIn}
+      />
     </AuthContext.Provider>
   );
 }

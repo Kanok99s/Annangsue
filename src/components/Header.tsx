@@ -38,7 +38,7 @@ export function Header({
   onDirectionChange?: (d: Direction) => void;
 }) {
   const { totalCount } = useVocab();
-  const { user, signOut } = useAuth();
+  const { user, askSignIn, signOut } = useAuth();
 
   return (
     <div className="border-b border-border">
@@ -99,15 +99,28 @@ export function Header({
             V
           </Link>
           <div className="flex items-center gap-3 border-l border-border pl-4">
-            <span className="hidden max-w-40 truncate text-xs text-mute lg:block">
-              {user?.email}
-            </span>
-            <button
-              onClick={() => void signOut()}
-              className="text-xs font-semibold text-mute transition-colors hover:text-foreground"
-            >
-              Sign out
-            </button>
+            {user ? (
+              <>
+                <span className="hidden max-w-40 truncate text-xs text-mute lg:block">
+                  {user.email}
+                </span>
+                <button
+                  onClick={() => void signOut()}
+                  className="text-xs font-semibold text-mute transition-colors hover:text-foreground"
+                >
+                  Sign out
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() =>
+                  askSignIn("Sign in to save words and keep your books in the library.")
+                }
+                className="rounded-full bg-accent px-4 py-1.5 text-xs font-semibold text-accent-foreground transition-colors hover:opacity-90"
+              >
+                Sign in
+              </button>
+            )}
           </div>
         </div>
       </div>

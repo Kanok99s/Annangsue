@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { useAuth } from "@/components/AuthProvider";
 import {
   getBook,
   getList,
@@ -139,6 +140,7 @@ export async function scoreWord(bookId: string, entryId: string, wasCorrect: boo
  * agree.
  */
 export function useVocab() {
+  const { status, user } = useAuth();
   const [state, setState] = useState<{ books: BookMeta[]; lists: VocabList[] }>({
     books: [],
     lists: [],
@@ -146,7 +148,19 @@ export function useVocab() {
   const [hydrated, setHydrated] = useState(false);
   const alive = useRef(true);
 
+  // Without an account there is nothing to load: the library and lists are
+  // simply empty, and every signed-in reload happens once a session appears
+  // (or clears the moment one disappears).
+  const signedIn = status === "ready" && user !== null;
+
   const reload = useCallback(() => {
+    if (!signedIn) {
+      if (alive.current) {
+        setState({ books: [], lists: [] });
+        setHydrated(true);
+      }
+      return;
+    }
     void loadState()
       .then((next) => {
         if (alive.current) {
@@ -158,7 +172,7 @@ export function useVocab() {
         console.error("Could not load your library.", error);
         if (alive.current) setHydrated(true);
       });
-  }, []);
+  }, [signedIn]);
 
   useEffect(() => {
     alive.current = true;

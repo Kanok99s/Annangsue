@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { Header } from "@/components/Header";
+import { useAuth } from "@/components/AuthProvider";
 import { removeWord, speak, useVocab, type ScopedEntry } from "@/lib/vocab";
 
 export const Route = createFileRoute("/vocabulary")({
@@ -61,6 +62,7 @@ function WordCard({ entry, onRemove }: { entry: ScopedEntry; onRemove: () => voi
 
 function VocabularyPage() {
   const { hydrated, lists, allEntries, totalCount } = useVocab();
+  const { user, askSignIn } = useAuth();
   const [view, setView] = useState<View>({ kind: "grid" });
 
   const activeList =
@@ -110,13 +112,26 @@ function VocabularyPage() {
 
       {!hydrated ? null : lists.length === 0 ? (
         <div className="mt-10 rounded-2xl border border-dashed border-input p-16 text-center">
-          <p className="font-serif text-2xl">Nothing saved yet</p>
-          <p className="mt-2 text-sm text-mute">
-            Open a book in the reader and tap a word to add it here — words are kept per book.
+          <p className="font-serif text-2xl">
+            {user ? "Nothing saved yet" : "Your list lives with your account"}
           </p>
-          <Link to="/" className="mt-5 inline-block text-sm font-semibold text-accent">
-            Go to the reader →
-          </Link>
+          <p className="mx-auto mt-2 max-w-md text-sm text-mute">
+            {user
+              ? "Open a book in the reader and tap a word to add it here — words are kept per book."
+              : "Tap any word in a book to read its meaning right away. Signing in is only needed if you want to save words to a list and study them."}
+          </p>
+          {user ? (
+            <Link to="/" className="mt-5 inline-block text-sm font-semibold text-accent">
+              Go to the reader →
+            </Link>
+          ) : (
+            <button
+              onClick={() => askSignIn("Sign in to save words and study them here.")}
+              className="mt-5 rounded-full bg-accent px-6 py-2.5 text-sm font-semibold text-accent-foreground transition-colors hover:opacity-90"
+            >
+              Sign in to save words
+            </button>
+          )}
         </div>
       ) : (
         <div className="mt-10 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">

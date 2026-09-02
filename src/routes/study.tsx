@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Header } from "@/components/Header";
+import { useAuth } from "@/components/AuthProvider";
 import { scoreWord, speak, useVocab, type ScopedEntry } from "@/lib/vocab";
 
 export const Route = createFileRoute("/study")({
@@ -44,6 +45,7 @@ function shuffle<T>(items: T[]): T[] {
 
 function StudyPage() {
   const { hydrated, lists, allEntries } = useVocab();
+  const { user, askSignIn } = useAuth();
   // "all" spans every list; otherwise a specific bookId is drilled.
   const [scope, setScope] = useState<string>("all");
   const [mode, setMode] = useState<Mode>("recognition");
@@ -58,16 +60,25 @@ function StudyPage() {
       : (lists.find((l) => l.bookId === target)?.entries.map((e) => ({ ...e, bookId: target })) ??
         []);
 
-  // Snapshot the word pool when the session starts (mount, scope change or
-  // replay). Keeping a fixed pool means answering a question (which writes
-  // scores to the store and triggers a reload) never reshuffles the deck
-  // mid-question.
+  // Snapshot the word pool whenever its *content* changes — initial load,
+  // scope change, sign-in/out, words added on another page. Answering a
+  // question writes scores and triggers a reload, but the entry ids stay the
+  // same, so the key below keeps the deck fixed mid-question.
+  const poolKeyRef = useRef("");
   const [pool, setPool] = useState<ScopedEntry[]>([]);
   useEffect(() => {
     if (!hydrated) return;
-    setPool(poolFor(scope));
+    const target = poolFor(scope);
+    const key = `${scope}|${target.map((e) => e.id).join(",")}`;
+    if (poolKeyRef.current === key) return;
+    poolKeyRef.current = key;
+    setPool(target);
+    setPicked(null);
+    setIndex(0);
+    setCorrectCount(0);
+    // poolFor reads the latest lists/allEntries each run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrated, scope]);
+  }, [hydrated, scope, allEntries, lists]);
 
   const deck = useMemo(() => (pool.length ? shuffle(pool).slice(0, 10) : []), [pool, seed]);
   const current: ScopedEntry | undefined = deck[index];
@@ -173,14 +184,26 @@ function StudyPage() {
           </div>
         ) : pool.length < 4 ? (
           <div className="mt-10 rounded-2xl border border-dashed border-input p-16 text-center">
-            <p className="font-serif text-2xl">Save at least four words first</p>
-            <p className="mt-2 text-sm text-mute">
-              {scope === "all"
-                ? "Drills need a few alternatives to choose between."
-                : "This book's list needs a few alternatives — add more words or switch to All books."}
+            <p className="font-serif text-2xl">
+              {user ? "Save at least four words first" : "Saved words need an account"}
             </p>
-            <div className="mt-5 flex justify-center gap-4">
-              {scope !== "all" && (
+            <p className="mx-auto mt-2 max-w-md text-sm text-mute">
+              {user
+                ? scope === "all"
+                  ? "Drills need a few alternatives to choose between."
+                  : "This book's list needs a few alternatives — add more words or switch to All books."
+                : "Sign in, then tap words while you read to build a list you can drill here."}
+            </p>
+            <div className="mt-5 flex flex-wrap justify-center gap-4">
+              {!user && (
+                <button
+                  onClick={() => askSignIn("Sign in to save the words you want to drill.")}
+                  className="rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-accent-foreground transition-colors hover:opacity-90"
+                >
+                  Sign in to save words
+                </button>
+              )}
+              {user && scope !== "all" && (
                 <button
                   onClick={() => changeScope("all")}
                   className="rounded-full border border-input px-5 py-2.5 text-sm font-semibold text-foreground"
@@ -190,7 +213,7 @@ function StudyPage() {
               )}
               <Link
                 to="/"
-                className="rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground"
+                className="rounded-full border border-input px-5 py-2.5 text-sm font-semibold text-foreground"
               >
                 Back to the reader →
               </Link>

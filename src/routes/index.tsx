@@ -4,6 +4,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 
 import { Header, type Direction } from "@/components/Header";
+import { useAuth } from "@/components/AuthProvider";
 import { contentHash, parseEpub } from "@/lib/epub";
 import {
   lookupExample,
@@ -166,6 +167,7 @@ function ReaderPage() {
   const dragDepth = useRef(0);
 
   const { books, wordCounts, savedTerms, totalCount } = useVocab();
+  const { user, askSignIn, promptOpen } = useAuth();
   const doTranslate = useServerFn(translatePage);
   const doLookup = useServerFn(lookupWord);
   const doExample = useServerFn(lookupExample);
@@ -234,6 +236,55 @@ function ReaderPage() {
     return { src, tgt };
   }, [hover, alignment, srcParas, tgtParas]);
 
+  // A book opened before signing in lives in this tab's memory only. The
+  // moment an account appears we persist the open book, and run any word-save
+  // that was queued while signed out (the sign-in dialog never navigates away,
+  // so the word slip below is still live when it closes).
+  const prevUserId = useRef<string | null>(null);
+  const pendingSaveRef = useRef<{
+    bookId: string;
+    book: Pick<StoredBook, "title" | "author">;
+    word: Parameters<typeof addWord>[2];
+  } | null>(null);
+
+  // Once an account appears: persist the open book and run any word-save that
+  // was queued while signed out. Defined before the dismissal effect below so
+  // it consumes the queue first.
+  useEffect(() => {
+    const uid = user?.id ?? null;
+    const justSignedIn = uid !== null && prevUserId.current !== uid;
+    prevUserId.current = uid;
+    if (!justSignedIn) return;
+
+    const pending = pendingSaveRef.current;
+    pendingSaveRef.current = null;
+    void (async () => {
+      try {
+        if (book) {
+          await addBook(book);
+          toast.success(`Signed in — “${book.title}” was added to your library.`);
+        }
+        if (pending) {
+          const ok = await addWord(pending.bookId, pending.book, pending.word);
+          toast[ok ? "success" : "info"](
+            ok ? `Saved ${pending.word.term} to your list` : "Already in this book’s list",
+          );
+        }
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not sync after signing in.");
+      }
+    })();
+  }, [user?.id, book]);
+
+  // Closing the sign-in prompt without signing in cancels any queued save
+  // (signing in closes it too, but the effect above already consumed it).
+  const prevPromptOpen = useRef(false);
+  useEffect(() => {
+    const wasOpen = prevPromptOpen.current;
+    prevPromptOpen.current = promptOpen;
+    if (wasOpen && !promptOpen) pendingSaveRef.current = null;
+  }, [promptOpen]);
+
   const translateCurrent = useCallback(
     async (text: string, dir: Direction) => {
       // Send paragraphs verbatim (same strings the panes render) so Azure's
@@ -281,18 +332,33 @@ function ReaderPage() {
           uploadedAt: Date.now(),
           lastOpenedAt: Date.now(),
         };
-        await addBook(stored);
+        // The book always opens for reading. Only signed-in users get it
+        // persisted to the cloud library; for guests it stays in this tab and
+        // sign-in is offered when they try to save a word.
         setBook(stored);
         setPageIndex(0);
         setSelected(null);
-        toast.success(`Loaded “${stored.title}” · ${stored.pages.length} pages`);
+        if (user) {
+          try {
+            await addBook(stored);
+            toast.success(`Loaded “${stored.title}” · ${stored.pages.length} pages`);
+          } catch (error) {
+            toast.error(
+              error instanceof Error ? error.message : "Could not save to your library.",
+            );
+          }
+        } else {
+          toast.success(
+            `Loaded “${stored.title}” · ${stored.pages.length} pages — sign in to keep it in your library`,
+          );
+        }
         const first = stored.pages[0];
         if (first) void translateCurrent(first.text, direction);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Could not read that EPUB.");
       }
     },
-    [direction, translateCurrent],
+    [user, direction, translateCurrent],
   );
 
   /** Reopen a book from the saved library. */
@@ -427,11 +493,15 @@ function ReaderPage() {
 
   const saveSelected = async () => {
     if (!selected?.data || !book) return;
-    const ok = await addWord(
-      book.id,
-      book,
-      { ...selected.data, source: book.title },
-    );
+    const word = { ...selected.data, source: book.title };
+    if (!user) {
+      // Queue the save so it lands the moment an account exists, and ask for
+      // one right here — reading, the open book and this word slip stay put.
+      pendingSaveRef.current = { bookId: book.id, book, word };
+      askSignIn(`Save “${selected.data.term}” — sign in to keep words on this book’s list.`);
+      return;
+    }
+    const ok = await addWord(book.id, book, word);
     toast[ok ? "success" : "info"](
       ok ? `Saved ${selected.data.term} to “${book.title}”` : "Already in this book’s list",
     );
@@ -464,8 +534,9 @@ function ReaderPage() {
               )}
             </h1>
             <p className="mt-4 max-w-xl text-[15px] leading-relaxed text-mute">
-              Tap any underlined word to save it to your study list. Each page renders fully
-              translated, side by side, so you can read the original alongside the translation.
+              Tap any underlined word to see its meaning — an account is only needed when you want
+              to save it. Each page renders fully translated, side by side, so you can read the
+              original alongside the translation.
             </p>
           </div>
 
@@ -608,8 +679,9 @@ function ReaderPage() {
                 >
                   <p className="font-serif text-2xl">Drop in an EPUB</p>
                   <p className="mt-2 max-w-xs text-sm text-mute">
-                    Drag & drop your file anywhere, or click here to browse. It is saved to your
-                    library in the cloud, ready on any device.
+                    {user
+                      ? "Drag & drop your file anywhere, or click here to browse. It is saved to your library in the cloud, ready on any device."
+                      : "Drag & drop your file anywhere, or click here to browse. Reading works right away without an account — sign in if you want the book kept in your library."}
                   </p>
                 </div>
               )}

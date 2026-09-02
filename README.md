@@ -9,9 +9,10 @@ drill it with kanji, meaning and pronunciation exercises.
 Annangsue turns any EPUB into a bilingual reading experience for language
 learners:
 
-- **Import any EPUB** — parse the book in the browser (JSZip) and save it to
-  your account's cloud library. You can also drag & drop a file anywhere on the
-  page.
+- **Import any EPUB** — parse the book in the browser (JSZip) and start
+  reading right away; when signed in it's saved to your account's cloud
+  library (guests read from the current tab only). Drag & drop a file anywhere
+  on the page works too.
 - **Side-by-side reading** — read the original page next to its translation,
   with configurable source/target language directions (EN ↔ JA/KO/SV).
 - **Hover-to-match** — hover a word in either pane and its equivalent in the
@@ -24,8 +25,10 @@ learners:
 - **Vocabulary list** — every word you tapped, with an SRS-style drill score,
   ready to review.
 
-Sign in with email + password (Supabase Auth), and your books and vocabulary
-lists are stored per-account in Supabase Postgres behind row-level security.
+Reading is free for everyone — upload an EPUB, read it side by side, and look
+words up without an account. Sign in with email + password (Supabase Auth)
+when you want to keep things: books saved to your cloud library and word lists
+stored per-account in Supabase Postgres behind row-level security.
 Translation/dictionary requests use keyless public APIs (MyMemory, Jisho,
 Tatoeba). Setting `MICROSOFT_TRANSLATOR_KEY` (free Azure tier) upgrades page
 translation to Microsoft Translator and enables the word-alignment hover

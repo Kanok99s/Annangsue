@@ -11,8 +11,11 @@ drills over the saved words.
 
 **Supabase** is the backend: email/password auth, and each account's parsed
 books + vocabulary lists are stored in Postgres behind row-level security.
-There is no anonymous access — the app is a signed-in wall (see
-`src/components/AuthProvider.tsx` and `src/routes/login.tsx`).
+The reader is open to everyone (upload, read, translate, look words up); an
+account is only needed to *save* — persist books to the cloud library and keep
+word lists. Sign-in is prompted at the point of need via a dialog
+(`src/components/AuthProvider.tsx`, `AuthForm.tsx`, `SignInDialog.tsx`), with
+`/login` as the standalone sign-in page.
 
 ## Stack
 
