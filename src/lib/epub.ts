@@ -13,6 +13,25 @@ export type ParsedBook = {
   pages: BookPage[];
 };
 
+/**
+ * Content identity for an EPUB: a SHA-256 of the raw file bytes so that the
+ * same file always maps to the same book id (renames change nothing), while
+ * two different editions stay distinct. Falls back to a file-attribute hash
+ * on platforms where WebCrypto is unavailable.
+ */
+export async function contentHash(file: File | Blob, name?: string): Promise<string> {
+  try {
+    const bytes = await file.arrayBuffer();
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  } catch {
+    const suffix = (n: number) => n.toString(36);
+    return `attr-${suffix((name ?? "blob").length)}-${suffix(file.size)}-${suffix(
+      file instanceof File ? file.lastModified : 0,
+    )}`;
+  }
+}
+
 function textOf(node: Element | null | undefined): string {
   return node?.textContent?.trim() ?? "";
 }

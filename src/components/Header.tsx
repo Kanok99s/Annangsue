@@ -36,7 +36,7 @@ export function Header({
   direction?: Direction;
   onDirectionChange?: (d: Direction) => void;
 }) {
-  const { entries } = useVocab();
+  const { totalCount } = useVocab();
 
   return (
     <div className="border-b border-border">
@@ -88,7 +88,7 @@ export function Header({
 
         <div className="flex items-center gap-4">
           <Link to="/vocabulary" className="hidden text-sm text-mute sm:block">
-            {entries.length} words saved
+            {totalCount} words saved
           </Link>
           <Link
             to="/study"

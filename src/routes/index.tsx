@@ -4,7 +4,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 
 import { Header, type Direction } from "@/components/Header";
-import { parseEpub, type ParsedBook } from "@/lib/epub";
+import { contentHash, parseEpub } from "@/lib/epub";
 import {
   lookupExample,
   lookupWord,
@@ -12,7 +12,15 @@ import {
   type AlignSpan,
   type WordLookup,
 } from "@/lib/translate.functions";
-import { speak, useVocab } from "@/lib/vocab";
+import {
+  addBook,
+  addWord,
+  openBook,
+  removeBookKeepList,
+  speak,
+  useVocab,
+  type StoredBook,
+} from "@/lib/vocab";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -139,7 +147,7 @@ function spanHits(start: number, end: number, lo: number, hi: number): boolean {
 
 function ReaderPage() {
   const [direction, setDirection] = useState<Direction>("ja-en");
-  const [book, setBook] = useState<ParsedBook | null>(null);
+  const [book, setBook] = useState<StoredBook | null>(null);
   const [pageIndex, setPageIndex] = useState(0);
   const [translation, setTranslation] = useState("");
   const [alignment, setAlignment] = useState<AlignSpan[][] | null>(null);
@@ -157,15 +165,13 @@ function ReaderPage() {
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
 
-  const { entries, add } = useVocab();
+  const { books, wordCounts, savedTerms, totalCount } = useVocab();
   const doTranslate = useServerFn(translatePage);
   const doLookup = useServerFn(lookupWord);
   const doExample = useServerFn(lookupExample);
 
   const page = book?.pages[pageIndex];
   const sourceIsJapanese = direction === "ja-en";
-
-  const savedTerms = useMemo(() => new Set(entries.map((e) => e.term.toLowerCase())), [entries]);
 
   // Character-ranged token streams for both panes. Azure alignment spans use
   // the same character offsets, so ranges here map directly onto them.
@@ -266,17 +272,70 @@ function ReaderPage() {
     async (file: File) => {
       try {
         const parsed = await parseEpub(file);
-        setBook(parsed);
+        // Same bytes => same id, so re-uploading merges into the same book &
+        // list instead of duplicating.
+        const id = await contentHash(file, file.name);
+        const stored: StoredBook = {
+          ...parsed,
+          id,
+          uploadedAt: Date.now(),
+          lastOpenedAt: Date.now(),
+        };
+        await addBook(stored);
+        setBook(stored);
         setPageIndex(0);
         setSelected(null);
-        toast.success(`Loaded “${parsed.title}” · ${parsed.pages.length} pages`);
-        const first = parsed.pages[0];
+        toast.success(`Loaded “${stored.title}” · ${stored.pages.length} pages`);
+        const first = stored.pages[0];
         if (first) void translateCurrent(first.text, direction);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Could not read that EPUB.");
       }
     },
     [direction, translateCurrent],
+  );
+
+  /** Reopen a book from the on-device library. */
+  const reopen = useCallback(
+    async (id: string) => {
+      const stored = await openBook(id);
+      if (!stored) {
+        toast.error("That book is no longer in your library.");
+        return;
+      }
+      setBook(stored);
+      setPageIndex(0);
+      setSelected(null);
+      setTranslation("");
+      setAlignment(null);
+      setHover(null);
+      const first = stored.pages[0];
+      if (first) void translateCurrent(first.text, direction);
+    },
+    [direction, translateCurrent],
+  );
+
+  /** Close the reader back to the library grid (nothing is lost). */
+  const closeBook = useCallback(() => {
+    setBook(null);
+    setPageIndex(0);
+    setSelected(null);
+    setTranslation("");
+    setAlignment(null);
+    setHover(null);
+  }, []);
+
+  /** Remove only the library entry — saved words for the book are kept. */
+  const removeFromLibrary = useCallback(
+    async (id: string, title: string) => {
+      const confirmed = window.confirm(
+        `Remove “${title}” from your library?\n\nIts saved word list will be kept — you can reconnect them by uploading the same file again.`,
+      );
+      if (!confirmed) return;
+      await removeBookKeepList(id);
+      toast.success("Removed from your library — its saved words are kept.");
+    },
+    [],
   );
 
   // Accept an EPUB dropped anywhere on the page, not just via the file picker.
@@ -366,13 +425,16 @@ function ReaderPage() {
     }
   };
 
-  const saveSelected = () => {
-    if (!selected?.data) return;
-    const ok = add({
-      ...selected.data,
-      source: book?.title ?? "Reader",
-    });
-    toast[ok ? "success" : "info"](ok ? `Saved ${selected.data.term}` : "Already in your list");
+  const saveSelected = async () => {
+    if (!selected?.data || !book) return;
+    const ok = await addWord(
+      book.id,
+      book,
+      { ...selected.data, source: book.title },
+    );
+    toast[ok ? "success" : "info"](
+      ok ? `Saved ${selected.data.term} to “${book.title}”` : "Already in this book’s list",
+    );
     setSelected(null);
   };
 
@@ -425,6 +487,14 @@ function ReaderPage() {
             >
               Upload EPUB
             </button>
+            {book && (
+              <button
+                onClick={closeBook}
+                className="rounded-full border border-input px-5 py-2.5 text-sm font-semibold transition-colors hover:bg-primary hover:text-primary-foreground"
+              >
+                Library
+              </button>
+            )}
             <button
               onClick={() => page && void translateCurrent(page.text, direction)}
               disabled={!page || translating}
@@ -435,6 +505,50 @@ function ReaderPage() {
           </div>
         </div>
       </div>
+
+      {!book && books.length > 0 && (
+        <div className="mx-auto max-w-[1240px] px-6 pb-8 lg:px-10">
+          <div className="mb-4 flex items-center gap-3">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.3em] text-accent">
+              Your library
+            </span>
+            <span className="h-px w-8 bg-foreground/30" />
+            <span className="text-[11px] uppercase tracking-[0.3em] text-mute">
+              {books.length} books
+            </span>
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {books.map((b) => (
+              <div key={b.id} className="rounded-2xl border border-border bg-card p-5">
+                <button
+                  onClick={() => void reopen(b.id)}
+                  className="block w-full text-left"
+                >
+                  <p className="font-serif text-xl font-semibold leading-tight">{b.title}</p>
+                  <p className="mt-1 text-sm text-mute">{b.author}</p>
+                  <p className="mt-3 text-xs text-mute">
+                    {b.pageCount} pages · {wordCounts.get(b.id) ?? 0} words saved
+                  </p>
+                </button>
+                <div className="mt-4 flex items-center justify-between border-t border-border pt-3 text-xs">
+                  <button
+                    onClick={() => void reopen(b.id)}
+                    className="font-semibold text-accent"
+                  >
+                    Open →
+                  </button>
+                  <button
+                    onClick={() => void removeFromLibrary(b.id, b.title)}
+                    className="text-mute hover:text-foreground"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="mx-auto max-w-[1240px] px-6 pb-20 lg:px-10">
         <div className="relative">
@@ -494,15 +608,19 @@ function ReaderPage() {
                 >
                   <p className="font-serif text-2xl">Drop in an EPUB</p>
                   <p className="mt-2 max-w-xs text-sm text-mute">
-                    Drag & drop your file anywhere, or click here to browse. It stays in this
-                    browser.
+                    Drag & drop your file anywhere, or click here to browse. It is saved to your
+                    library on this device.
                   </p>
                 </div>
               )}
 
               <div className="mt-7 flex items-center justify-between border-t border-border pt-5 text-sm">
-                <span className="text-mute">Tap a word to add it</span>
-                <span className="font-semibold text-accent">{entries.length} saved</span>
+                <span className="text-mute">
+                  {book ? "Tap a word to add it to this book" : "Words save per book"}
+                </span>
+                <span className="font-semibold text-accent">
+                  {book ? (wordCounts.get(book.id) ?? 0) : totalCount} saved
+                </span>
               </div>
             </article>
 
@@ -627,7 +745,10 @@ function ReaderPage() {
                       Finding an example sentence…
                     </p>
                   ) : null}
-                  <div className="mt-5 flex items-center gap-3">
+                  <p className="mt-5 text-[11px] uppercase tracking-[0.2em] text-mute">
+                    Save to “{book?.title ?? "your list"}”
+                  </p>
+                  <div className="mt-2 flex items-center gap-3">
                     <button
                       onClick={saveSelected}
                       disabled={selected.loading || selected.exampleLoading}

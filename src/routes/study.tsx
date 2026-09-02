@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { Header } from "@/components/Header";
-import { speak, useVocab, type VocabEntry } from "@/lib/vocab";
+import { scoreWord, speak, useVocab, type ScopedEntry } from "@/lib/vocab";
 
 export const Route = createFileRoute("/study")({
   head: () => ({
@@ -10,12 +10,13 @@ export const Route = createFileRoute("/study")({
       {
         name: "description",
         content:
-          "Drill your saved words three ways: word recognition, kanji reading, and listening — pick the correct answer by ear.",
+          "Drill your saved words three ways: word recognition, kanji reading, and listening — drill one book's list or everything at once.",
       },
       { property: "og:title", content: "Word, kanji and listening drills — Annangsue" },
       {
         property: "og:description",
-        content: "Practise the words you saved while reading with recognition, kanji and voiced drills.",
+        content:
+          "Practise the words you saved while reading with recognition, kanji and voiced drills.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -42,31 +43,50 @@ function shuffle<T>(items: T[]): T[] {
 }
 
 function StudyPage() {
-  const { entries, score } = useVocab();
+  const { hydrated, lists, allEntries } = useVocab();
+  // "all" spans every list; otherwise a specific bookId is drilled.
+  const [scope, setScope] = useState<string>("all");
   const [mode, setMode] = useState<Mode>("recognition");
   const [index, setIndex] = useState(0);
   const [picked, setPicked] = useState<string | null>(null);
   const [correctCount, setCorrectCount] = useState(0);
   const [seed, setSeed] = useState(0);
 
-  const deck = useMemo(() => (entries.length ? shuffle(entries).slice(0, 10) : []), [entries, seed]);
-  const current: VocabEntry | undefined = deck[index];
+  const poolFor = (target: string): ScopedEntry[] =>
+    target === "all"
+      ? allEntries
+      : (lists.find((l) => l.bookId === target)?.entries.map((e) => ({ ...e, bookId: target })) ??
+        []);
+
+  // Snapshot the word pool when the session starts (mount, scope change or
+  // replay). Keeping a fixed pool means answering a question (which writes
+  // scores to the store and triggers a reload) never reshuffles the deck
+  // mid-question.
+  const [pool, setPool] = useState<ScopedEntry[]>([]);
+  useEffect(() => {
+    if (!hydrated) return;
+    setPool(poolFor(scope));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated, scope]);
+
+  const deck = useMemo(() => (pool.length ? shuffle(pool).slice(0, 10) : []), [pool, seed]);
+  const current: ScopedEntry | undefined = deck[index];
 
   const options = useMemo(() => {
-    if (!current) return [] as VocabEntry[];
-    const distractors = shuffle(entries.filter((e) => e.id !== current.id)).slice(0, 3);
+    if (!current) return [] as ScopedEntry[];
+    const distractors = shuffle(pool.filter((e) => e.id !== current.id)).slice(0, 3);
     return shuffle([current, ...distractors]);
-  }, [current, entries]);
+  }, [current, pool]);
 
   useEffect(() => {
     if (mode === "voiced" && current) speak(current.term);
   }, [mode, current]);
 
-  const onPick = (entry: VocabEntry) => {
+  const onPick = (entry: ScopedEntry) => {
     if (picked || !current) return;
     const wasCorrect = entry.id === current.id;
     setPicked(entry.id);
-    score(current.id, wasCorrect);
+    void scoreWord(current.bookId, current.id, wasCorrect);
     if (wasCorrect) setCorrectCount((c) => c + 1);
   };
 
@@ -81,7 +101,16 @@ function StudyPage() {
     }
   };
 
-  const optionLabel = (entry: VocabEntry) =>
+  const changeScope = (next: string) => {
+    setScope(next);
+    setPool(poolFor(next));
+    setPicked(null);
+    setIndex(0);
+    setCorrectCount(0);
+    setSeed((s) => s + 1);
+  };
+
+  const optionLabel = (entry: ScopedEntry) =>
     mode === "kanji" ? entry.reading : mode === "voiced" ? entry.meaning : entry.term;
 
   return (
@@ -121,19 +150,55 @@ function StudyPage() {
           </div>
         </div>
 
-        {entries.length < 4 ? (
+        <div className="mt-6 flex flex-wrap items-center gap-2 text-sm">
+          <span className="text-mute">Drilling:</span>
+          <select
+            aria-label="Which book to drill"
+            value={scope}
+            onChange={(e) => changeScope(e.target.value)}
+            className="rounded-full border border-input bg-background px-4 py-2 font-semibold text-foreground outline-none transition-colors hover:border-accent focus:border-accent"
+          >
+            <option value="all">All books ({allEntries.length} words)</option>
+            {lists.map((list) => (
+              <option key={list.bookId} value={list.bookId}>
+                {list.title} ({list.entries.length})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {!hydrated ? (
+          <div className="mt-10 rounded-2xl border border-dashed border-input p-16 text-center">
+            <p className="font-serif text-2xl">Loading your words…</p>
+          </div>
+        ) : pool.length < 4 ? (
           <div className="mt-10 rounded-2xl border border-dashed border-input p-16 text-center">
             <p className="font-serif text-2xl">Save at least four words first</p>
             <p className="mt-2 text-sm text-mute">
-              Drills need a few alternatives to choose between.
+              {scope === "all"
+                ? "Drills need a few alternatives to choose between."
+                : "This book's list needs a few alternatives — add more words or switch to All books."}
             </p>
-            <Link to="/" className="mt-5 inline-block text-sm font-semibold text-accent">
-              Back to the reader →
-            </Link>
+            <div className="mt-5 flex justify-center gap-4">
+              {scope !== "all" && (
+                <button
+                  onClick={() => changeScope("all")}
+                  className="rounded-full border border-input px-5 py-2.5 text-sm font-semibold text-foreground"
+                >
+                  Drill all books
+                </button>
+              )}
+              <Link
+                to="/"
+                className="rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground"
+              >
+                Back to the reader →
+              </Link>
+            </div>
           </div>
         ) : (
           current && (
-            <div className="mt-10 grid gap-6 md:grid-cols-[1.2fr_1fr]">
+            <div className="mt-6 grid gap-6 md:grid-cols-[1.2fr_1fr]">
               <div className="rounded-2xl border border-border bg-card p-9">
                 <div className="mb-6 flex items-center justify-between text-[11px] uppercase tracking-[0.25em] text-mute">
                   <span>
@@ -212,7 +277,9 @@ function StudyPage() {
               </div>
 
               <div className="rounded-2xl border border-border bg-card p-9">
-                <span className="text-[11px] uppercase tracking-[0.25em] text-mute">In context</span>
+                <span className="text-[11px] uppercase tracking-[0.25em] text-mute">
+                  In context
+                </span>
                 {current.example ? (
                   <>
                     <p className="mt-4 font-jp text-lg leading-[2]">{current.example}</p>
