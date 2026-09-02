@@ -213,10 +213,20 @@ function StudyPage() {
 
               <div className="rounded-2xl border border-border bg-card p-9">
                 <span className="text-[11px] uppercase tracking-[0.25em] text-mute">In context</span>
-                <p className="mt-4 font-jp text-lg leading-[2]">{current.example}</p>
-                <p className="mt-3 text-sm text-mute">
-                  {picked ? current.exampleTranslation : "Answer to reveal the translation."}
-                </p>
+                {current.example ? (
+                  <>
+                    <p className="mt-4 font-jp text-lg leading-[2]">{current.example}</p>
+                    <p className="mt-3 text-sm text-mute">
+                      {picked
+                        ? current.exampleTranslation || "No translation saved for this sentence."
+                        : current.exampleTranslation
+                          ? "Answer to reveal the translation."
+                          : ""}
+                    </p>
+                  </>
+                ) : (
+                  <p className="mt-4 text-sm text-mute">No example sentence saved for this word.</p>
+                )}
                 <p className="mt-8 border-t border-border pt-5 text-xs text-mute">
                   From {current.source}
                 </p>

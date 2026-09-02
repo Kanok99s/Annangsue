@@ -405,8 +405,18 @@ function ReaderPage() {
                       {selected.data.meaning}
                     </p>
                   </div>
-                  <p className="mt-4 font-jp text-[15px] leading-relaxed">{selected.data.example}</p>
-                  <p className="mt-1 text-sm text-mute">{selected.data.exampleTranslation}</p>
+                  {selected.data.example && (
+                    <>
+                      <p className="mt-4 font-jp text-[15px] leading-relaxed">
+                        {selected.data.example}
+                      </p>
+                      {selected.data.exampleTranslation && (
+                        <p className="mt-1 text-sm text-mute">
+                          {selected.data.exampleTranslation}
+                        </p>
+                      )}
+                    </>
+                  )}
                   <div className="mt-5 flex items-center gap-3">
                     <button
                       onClick={saveSelected}
