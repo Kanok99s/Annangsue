@@ -182,39 +182,73 @@ function strArray(value: unknown): string[] {
   return [];
 }
 
+// Jotoba's /api/search/words has shipped different request shapes over time
+// (older: { query: { search, language } }; newer deployments expect the query
+// as a plain string). Lookups are on-demand only (one POST per tapped word), so
+// we try known shapes in order on a schema rejection and then remember the one
+// that works — never probing the API ahead of time.
+type JotobaBody = { query?: unknown; search?: string; language?: string; no_english?: boolean };
+
+function jotobaBodies(search: string, language: "Japanese" | "English"): JotobaBody[] {
+  return [
+    { query: { search, language }, no_english: false },
+    { query: search, language, no_english: false },
+    { search, language, no_english: false },
+    { query: search },
+  ];
+}
+
+// Only a 400 that looks like a payload/schema complaint warrants retrying with
+// another shape; rate limits or server errors must not cause retry storms.
+function looksLikeSchemaRejection(status: number, body: string): boolean {
+  return status === 400 && /deserialize|invalid type|expected a (string|map|struct)/i.test(body);
+}
+
+let workingBodyIndex: number | null = null;
+
 async function jotobaSearch(search: string, language: "Japanese" | "English"): Promise<JotobaWord[]> {
-  let response: Response;
-  try {
-    response = await fetch(JOTOBA_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: { search, language },
-        no_english: false,
-      }),
-      signal: withTimeout(),
-    });
-  } catch {
-    throw new Error("The dictionary service could not be reached.");
+  const bodies = jotobaBodies(search, language);
+  const ordered =
+    workingBodyIndex !== null
+      ? [bodies[workingBodyIndex]!, ...bodies.filter((_, i) => i !== workingBodyIndex)]
+      : bodies;
+
+  let lastStatus = 0;
+  let lastBody = "";
+  for (const body of ordered) {
+    let response: Response;
+    try {
+      response = await fetch(JOTOBA_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: withTimeout(),
+      });
+    } catch {
+      throw new Error("The dictionary service could not be reached.");
+    }
+
+    if (response.ok) {
+      if (workingBodyIndex === null) {
+        workingBodyIndex = bodies.indexOf(body);
+        console.log(`[jotoba] schema accepted for ${language}, using body shape ${workingBodyIndex}`);
+      }
+      const data = (await response.json().catch(() => null)) as { words?: unknown } | null;
+      if (!data || !Array.isArray(data.words)) return [];
+      return data.words.filter((w): w is JotobaWord => !!w && typeof w === "object");
+    }
+
+    lastStatus = response.status;
+    lastBody = await response.text().catch(() => "");
+    if (!looksLikeSchemaRejection(response.status, lastBody)) break;
   }
 
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    console.error(
-      `[jotoba] ${response.status} for ${JSON.stringify({ search, language })} ` +
-        `(len=${search.length}): ${body.slice(0, 400)}`,
-    );
-    const hint = body.trim().replace(/\s+/g, " ").slice(0, 160);
-    throw new Error(
-      hint
-        ? `The dictionary service failed (${response.status}): ${hint}`
-        : `The dictionary service failed (${response.status}).`,
-    );
-  }
-
-  const data = (await response.json()) as { words?: unknown };
-  if (!Array.isArray(data.words)) return [];
-  return data.words.filter((w): w is JotobaWord => !!w && typeof w === "object");
+  const hint = lastBody.trim().replace(/\s+/g, " ").slice(0, 160);
+  throw new Error(
+    hint
+      ? `The dictionary service failed (${lastStatus}): ${hint}`
+      : `The dictionary service failed (${lastStatus}).`,
+  );
 }
 
 function termOf(word: JotobaWord): string {
@@ -449,33 +483,3 @@ export const lookupWord = createServerFn({ method: "POST" })
     cachePut(lookupCache, cacheKey, lookup, LOOKUP_CACHE_MAX);
     return lookup;
   });
-
-// TEMP: probe candidate Jotoba request shapes. Remove once the schema is fixed.
-export const probeJotoba = createServerFn({ method: "POST" }).handler(async () => {
-  const search = "血";
-  const candidates: { label: string; body: unknown }[] = [
-    { label: "nested query object", body: { query: { search, language: "Japanese" }, no_english: false } },
-    { label: "query string + language", body: { query: search, language: "Japanese", no_english: false } },
-    { label: "flat search + language", body: { search, language: "Japanese", no_english: false } },
-    { label: "query string only", body: { query: search } },
-    { label: "bare JSON string", body: search },
-  ];
-  const out: string[] = [];
-  for (const candidate of candidates) {
-    try {
-      const response = await fetch(JOTOBA_ENDPOINT, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(candidate.body),
-        signal: withTimeout(8_000),
-      });
-      const text = await response.text();
-      out.push(
-        `${candidate.label} -> ${response.status} ${text.replace(/\s+/g, " ").slice(0, 140)}`,
-      );
-    } catch (error) {
-      out.push(`${candidate.label} -> ERR ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-  return { out };
-});
