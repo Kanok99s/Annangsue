@@ -32,18 +32,69 @@ export const Route = createFileRoute("/")({
 
 type Token = { text: string; word: boolean };
 
-function tokenize(text: string, japanese: boolean): Token[] {
-  if (japanese) {
-    // Japanese has no spaces: chunk runs of kanji/kana as tappable units.
-    const parts = text.match(/[\u4e00-\u9faf\u3040-\u309f\u30a0-\u30ff]+|[^\u4e00-\u9faf\u3040-\u309f\u30a0-\u30ff]+/g) ?? [];
-    return parts.map((p) => ({
-      text: p,
-      word: /[\u4e00-\u9faf\u3040-\u309f\u30a0-\u30ff]/.test(p),
-    }));
+// Japanese text has no spaces, so character-class chunking collapses whole
+// sentences into a single tappable unit. Use the runtime's dictionary-backed
+// Intl.Segmenter (browser/Node full-ICU) to split into real words. The reading
+// text is only tokenized in the browser after a book loads, so this never runs
+// during SSR/hydration.
+type IntlSegment = { segment: string; isWordLike: boolean };
+
+const getJapaneseSegmenter = () => {
+  const Ctor = (Intl as unknown as {
+    Segmenter?: new (locales?: string, options?: { granularity?: "word" }) => {
+      segment(input: string): Iterable<IntlSegment>;
+    };
+  }).Segmenter;
+  if (typeof Ctor !== "function") return null;
+  try {
+    return new Ctor("ja", { granularity: "word" });
+  } catch {
+    return null;
   }
-  return (text.match(/[A-Za-z''-]+|[^A-Za-z''-]+/g) ?? []).map((p) => ({
+};
+
+const jaSegmenter = getJapaneseSegmenter();
+
+// Grammatical particles/auxiliaries resolve to nothing useful in a dictionary
+// lookup — keep them rendered for the reading flow but not tappable.
+const JA_FUNCTION_WORDS = new Set([
+  "は", "が", "を", "に", "へ", "と", "も", "の", "や", "か", "ね", "よ", "わ", "ぞ", "で", "だ",
+  "です", "ます", "では", "には", "とは", "でも", "にも", "から", "まで", "より", "など", "だけ",
+  "しか", "ほど", "くらい", "ぐらい", "ばかり", "こそ", "さえ", "ながら", "けれど", "けど",
+  "ので", "のに", "ば", "たら", "って", "な", "ぜ", "て",
+]);
+
+const JP_CHARS = "\\u4e00-\\u9faf\\u3040-\\u309f\\u30a0-\\u30ff";
+const HAS_LETTER_OR_DIGIT = /[\p{L}\p{N}]/u;
+
+function tokenizeJapanese(text: string): Token[] {
+  if (jaSegmenter) {
+    const tokens: Token[] = [];
+    for (const { segment, isWordLike } of jaSegmenter.segment(text)) {
+      if (!segment) continue;
+      // Spaces/punctuation come back as non-word-like segments; keep them as
+      // plain text so the paragraph reflows exactly as before.
+      const tappable = isWordLike && !JA_FUNCTION_WORDS.has(segment) && HAS_LETTER_OR_DIGIT.test(segment);
+      tokens.push({ text: segment, word: tappable });
+    }
+    return tokens;
+  }
+  // Fallback for runtimes without Intl.Segmenter: split script runs so kanji
+  // and kana blocks at least become individually tappable units.
+  const re = new RegExp(`[${JP_CHARS}]+|[^${JP_CHARS}]+`, "g");
+  return (text.match(re) ?? []).map((p) => ({
     text: p,
-    word: /[A-Za-z]/.test(p) && p.length > 2,
+    word: new RegExp(`[${JP_CHARS}]`).test(p),
+  }));
+}
+
+function tokenize(text: string, japanese: boolean): Token[] {
+  if (japanese) return tokenizeJapanese(text);
+  // Alphabet- and space-separated text (English, Swedish, Korean): every
+  // letter run — including 1–2 letter words — is its own tappable token.
+  return (text.match(/[\p{L}'’-]+|[^\p{L}'’-]+/gu) ?? []).map((p) => ({
+    text: p,
+    word: /[\p{L}]/u.test(p),
   }));
 }
 
