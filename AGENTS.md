@@ -22,8 +22,10 @@ word lists. Sign-in is prompted at the point of need via a dialog
 - **TanStack Start** — file-based routing + SSR; route definitions live in
   `src/routes/` (`__root.tsx` is the app shell — keep its `<Outlet />`).
 - **React 19 + TypeScript** — strict.
-- **Tailwind CSS v4 + shadcn/ui** — components in `src/components/ui/` are
-  generated and should not be edited; build new components beside them or in
+- **Tailwind CSS v4 + shadcn/ui** — only the primitives the app actually uses
+  live in `src/components/ui/` (`dialog`, `sonner`); they are generated and
+  should not be edited by hand. Add a missing shadcn component by writing it as
+  a fresh generated file in `src/components/ui/` or build custom components in
   `src/components/`.
 - **pnpm** — the only package manager in use (`pnpm-lock.yaml`).
 
@@ -31,7 +33,7 @@ word lists. Sign-in is prompted at the point of need via a dialog
 
 | Path | Purpose |
 | --- | --- |
-| `src/routes/` | File-based routes — `index.tsx` (reader), `study.tsx`, `vocabulary.tsx`, `login.tsx` |
+| `src/routes/` | File-based routes — `index.tsx` (reader), `vocabulary.tsx` (word list + study drills), `login.tsx` |
 | `src/components/` | Shared React components (e.g. `Header.tsx`, `AuthProvider.tsx`) |
 | `src/lib/epub.ts` | EPUB parsing (JSZip) → `ParsedBook` of plain-text pages |
 | `src/lib/translate.functions.ts` | Server functions: full-page translation, word lookup, example sentences (keyless public APIs) |
