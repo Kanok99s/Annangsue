@@ -86,9 +86,6 @@ export function Header({
             <Link to="/vocabulary" activeProps={{ className: "text-foreground font-semibold" }}>
               Vocabulary
             </Link>
-            <Link to="/study" activeProps={{ className: "text-foreground font-semibold" }}>
-              Study
-            </Link>
           </nav>
         )}
 
@@ -97,7 +94,8 @@ export function Header({
             {totalCount} words saved
           </Link>
           <Link
-            to="/study"
+            to="/vocabulary"
+            aria-label="Vocabulary"
             className="grid size-9 place-items-center rounded-full bg-primary text-sm font-semibold text-primary-foreground"
           >
             V

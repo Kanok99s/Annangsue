@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { Header } from "@/components/Header";
+import { StudyDrill } from "@/components/StudyDrill";
 import { useAuth } from "@/components/AuthProvider";
 import { removeWord, speak, useVocab, type ScopedEntry } from "@/lib/vocab";
 
@@ -64,6 +65,8 @@ function VocabularyPage() {
   const { hydrated, lists, allEntries, totalCount } = useVocab();
   const { user, askSignIn } = useAuth();
   const [view, setView] = useState<View>({ kind: "grid" });
+  // A running quiz session; its scope preselects the deck in the drill.
+  const [drill, setDrill] = useState<{ scope: string } | null>(null);
 
   const activeList =
     view.kind === "list" ? lists.find((l) => l.bookId === view.bookId) : undefined;
@@ -102,12 +105,12 @@ function VocabularyPage() {
             Words <span className="italic text-accent">kept</span>
           </h1>
         </div>
-        <Link
-          to="/study"
+        <button
+          onClick={() => setDrill({ scope: "all" })}
           className="rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground"
         >
           Start studying
-        </Link>
+        </button>
       </div>
 
       {!hydrated ? null : lists.length === 0 ? (
@@ -183,12 +186,12 @@ function VocabularyPage() {
             {shown.heading}
           </h1>
         </div>
-        <Link
-          to="/study"
+        <button
+          onClick={() => setDrill({ scope: view.kind === "list" ? view.bookId : "all" })}
           className="rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground"
         >
           Start studying
-        </Link>
+        </button>
       </div>
 
       {shown.entries.length === 0 ? (
@@ -214,9 +217,13 @@ function VocabularyPage() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Header />
-      <div className="mx-auto max-w-[1240px] px-6 pt-14 pb-20 lg:px-10">
-        {view.kind === "grid" || !shown ? grid : listView}
-      </div>
+      {drill ? (
+        <StudyDrill initialScope={drill.scope} onExit={() => setDrill(null)} />
+      ) : (
+        <div className="mx-auto max-w-[1240px] px-6 pt-14 pb-20 lg:px-10">
+          {view.kind === "grid" || !shown ? grid : listView}
+        </div>
+      )}
     </div>
   );
 }
