@@ -1,55 +1,82 @@
-# Annangsue — Bilingual EPUB Reader
+# Annangsue — Bilingual EPUB reader
 
-Read EPUBs side by side in English and Japanese. Upload a book, get a full
-page-by-page translation, tap any word to save it to your vocabulary, and then
-drill it with kanji, meaning and pronunciation exercises.
+Read an EPUB in two languages at once. Annangsue shows the original page next
+to a full machine translation, lets you tap any word to look it up and save it
+to a per-book vocabulary list, and then quizzes you on those words.
 
-## What it is
+**Live app:** <https://annangsue.vercel.app/>
 
-Annangsue turns any EPUB into a bilingual reading experience for language
-learners:
+## What it does
 
-- **Import any EPUB** — parse the book in the browser (JSZip) and start
-  reading right away; when signed in it's saved to your account's cloud
-  library (guests read from the current tab only). Drag & drop a file anywhere
-  on the page works too.
-- **Side-by-side reading** — read the original page next to its translation,
-  with configurable source/target language directions (EN ↔ JA/KO/SV).
-- **Hover-to-match** — hover a word in either pane and its equivalent in the
-  other pane lights up (via Microsoft Translator's word-alignment data).
-- **Tap-to-save vocabulary** — tap any word (Japanese chunks of kanji/kana or
-  English words) to look it up against JMdict (via Jisho) and save it with its
-  reading, meaning, part of speech and a real example sentence (Tatoeba).
-- **Study drills** — drill your saved words three ways: word recognition,
-  kanji reading, and listening (pick the correct answer by ear).
-- **Vocabulary list** — every word you tapped, with an SRS-style drill score,
-  ready to review.
+- **Read side by side** — upload (or drag & drop) any EPUB and read it
+  paragraph-by-paragraph next to its translation, on facing panes. Turn pages
+  with the reader controls and each page translates as you go.
+- **Your language pair** — translate between English, Japanese and Korean in
+  any direction (Japanese → English is the default), and swap source/target at
+  any time. Swedish is next and already shows up in the picker as “coming
+  soon”.
+- **Tap words to look them up** — in English or Japanese text every word in
+  the reading pane is tappable. Tap one to get its reading, part of speech and
+  English meaning from Jisho (JMdict), plus a real example sentence from
+  Tatoeba with its translation. Japanese is split into real words with
+  `Intl.Segmenter`, so even an unspaced sentence breaks up into cleanly
+  tappable units.
+- **Save words per book** — a word you save is kept on that book's list, with
+  a running `correct/attempts` drill score. The library and your lists live on
+  your account and are private to it.
+- **Study drills** — on the Vocabulary page, drill a single book or all books
+  at once with randomized ten-word decks in three modes: **Word Recognition**
+  (read an English meaning, pick the word), **Kanji** (read the kanji, pick the
+  reading) and **Voiced** (hear the word spoken, pick the meaning).
+- **Listen anywhere** — built-in text-to-speech reads the original page, the
+  translation, and any saved word.
 
-Reading is free for everyone — upload an EPUB, read it side by side, and look
-words up without an account. Sign in with email + password (Supabase Auth)
-when you want to keep things: books saved to your cloud library and word lists
-stored per-account in Supabase Postgres behind row-level security.
-Translation/dictionary requests use keyless public APIs (MyMemory, Jisho,
-Tatoeba). Setting `MICROSOFT_TRANSLATOR_KEY` (free Azure tier) upgrades page
-translation to Microsoft Translator and enables the word-alignment hover
-feature; the app gracefully falls back to MyMemory when no key is present. See
-`.env.example`.
+## Guests and accounts
 
-## Features
+Reading is free for everyone: no account is needed to upload a book, read it
+side by side, or look words up. An account is only required to *keep* things —
+saving words to a list, and having your books stored in a cloud library that
+follows you across devices. When a guest tries to save, Annangsue opens a
+sign-in prompt right where you are (nothing is lost or navigated away), and
+queued saves sync automatically once you sign in.
 
-- Full-page translation that preserves paragraph structure
-- Smart word chunking so every word is individually tappable
-- Cloud library synced to your account — pick up reading on any device
-- Built-in text-to-speech for reading practice
-- No API keys required to run
+Sign in happens by email + password through Supabase Auth, either from the
+in-page prompt or the standalone `/login` page. Books and word lists are stored
+in Supabase Postgres behind row-level security, so each account sees only its
+own data.
+
+## Translation and dictionaries
+
+Everything works with no API keys. The reader is deliberately “keyless first”:
+
+- **Page translation** uses the free [MyMemory](https://mymemory.translated.net)
+  API, falling back gracefully whenever a key is not set.
+- **Word lookups** use Jisho's keyless API over the JMdict dictionary.
+- **Example sentences** come from [Tatoeba](https://tatoeba.org).
+
+Optional upgrades, configured through environment variables (see `.env.example`):
+
+- `MICROSOFT_TRANSLATOR_KEY` (+ `MICROSOFT_TRANSLATOR_REGION`) — free Azure
+  tier. Replaces MyMemory with Microsoft Translator and enables *word
+  alignment*: hover a word in either pane and its match lights up in the other.
+- `MYMEMORY_EMAIL` — a free MyMemory account email raises the anonymous
+  per-request and daily translation limits.
+
+### Running your own instance
+
+The app talks to a Supabase project for auth, the cloud library and word lists.
+The project URL and publishable key are in
+`src/integrations/supabase/client.ts` — point them at your own project. Two
+tables are expected (`books` and `lists`), each scoped to `user_id` with row
+level security so every account only ever accesses its own rows.
 
 ## Tech stack
 
 - [TanStack Start](https://tanstack.com/start) (file-based routing, SSR)
-- [React 19](https://react.dev)
-- [TypeScript](https://www.typescriptlang.org)
-- [Tailwind CSS v4](https://tailwindcss.com) + [shadcn/ui](https://ui.shadcn.com)
-- [pnpm](https://pnpm.io) as the package manager
+- [React 19](https://react.dev) + [TypeScript](https://www.typescriptlang.org)
+- [Tailwind CSS v4](https://tailwindcss.com) + shadcn/ui primitives
+- [Supabase](https://supabase.com) (auth + Postgres)
+- [pnpm](https://pnpm.io)
 
 ## Local development
 
@@ -62,30 +89,23 @@ pnpm dev
 
 Then open the printed URL (default `http://localhost:3000`).
 
-### Scripts
+| Command        | Description                                  |
+| -------------- | -------------------------------------------- |
+| `pnpm dev`     | Start the development server with hot reload |
+| `pnpm build`   | Production build                             |
+| `pnpm preview` | Preview the production build locally         |
+| `pnpm lint`    | Lint the codebase                            |
+| `pnpm format`  | Format with Prettier                         |
 
-| Command          | Description                                   |
-| ---------------- | --------------------------------------------- |
-| `pnpm dev`       | Start the development server with hot reload  |
-| `pnpm build`     | Production build (SSR + static)               |
-| `pnpm preview`   | Preview the production build locally          |
-| `pnpm lint`      | Lint the codebase                             |
-| `pnpm format`    | Format with Prettier                          |
+## Deployment
 
-## Deploying to Vercel
-
-The project is a standard TanStack Start app and deploys to Vercel with no
-special configuration:
-
-1. Push this repository to GitHub.
-2. In Vercel, **Import** the repository.
-3. Keep the defaults — Vercel detects pnpm automatically and runs
-   `pnpm install` and `pnpm build`. Framework preset: **Other** (TanStack Start
-   outputs a Nitro server, which Vercel picks up from `.output/`).
-
-That's it — every push to the default branch redeploys.
+The site is hosted on Vercel (<https://annangsue.vercel.app/>) as a standard
+TanStack Start app: Vercel detects pnpm and runs `pnpm install` and
+`pnpm build`, and every push to the default branch redeploys. Environment
+variables for the optional providers above are set in the Vercel project
+settings.
 
 ## License
 
-None declared yet. You are free to use, modify and distribute this project
-under your own terms.
+None declared. You are free to use, modify and distribute this project under
+your own terms.
