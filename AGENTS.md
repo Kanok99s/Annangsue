@@ -62,3 +62,7 @@ word lists. Sign-in is prompted at the point of need via a dialog
 - Translation and dictionary features are **keyless**; never introduce a
   required API key for core reading flow.
 - Keep diffs LF-normalized and commit-focused; don't reformat unrelated code.
+- Commit messages must be **short, natural and change-specific**, e.g.
+  `Update readme`, `Edit function X`, `Update dependency Y`. Never use long
+  prose or machine-translated-sounding phrasing; the platform may append a
+  `(n file changes)` count on its own.
