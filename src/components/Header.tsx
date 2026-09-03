@@ -21,11 +21,15 @@ function LangSelect({
       onChange={(e) => onChange(e.target.value as Lang)}
       className="rounded-full border border-input bg-background px-3 py-1.5 text-sm font-semibold text-foreground outline-none transition-colors hover:border-accent focus:border-accent"
     >
-      {LANGS.map((l) => (
-        <option key={l.code} value={l.code}>
-          {l.label}
-        </option>
-      ))}
+      {LANGS.map((l) => {
+        const comingSoon = l.code === "sv";
+        return (
+          <option key={l.code} value={l.code} disabled={comingSoon}>
+            {l.label}
+            {comingSoon ? " (coming soon)" : ""}
+          </option>
+        );
+      })}
     </select>
   );
 }

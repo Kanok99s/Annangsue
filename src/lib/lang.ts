@@ -32,7 +32,8 @@ export function isScriptual(code: Lang): boolean {
 
 /** Font class for rendering a language's text. */
 export function fontClass(code: Lang): string {
-  if (code === "ja" || code === "ko") return "font-jp leading-[2.1]";
+  if (code === "ko") return "font-ko leading-[2.1]";
+  if (code === "ja") return "font-jp leading-[2.1]";
   return "font-serif leading-[1.95]";
 }
 

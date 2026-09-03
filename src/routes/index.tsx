@@ -5,6 +5,7 @@ import { toast } from "sonner";
 
 import { Header, type Direction } from "@/components/Header";
 import { useAuth } from "@/components/AuthProvider";
+import { fontClass, langLabel, speechLang, splitDirection } from "@/lib/lang";
 import { contentHash, parseEpub } from "@/lib/epub";
 import {
   lookupExample,
@@ -173,17 +174,22 @@ function ReaderPage() {
   const doExample = useServerFn(lookupExample);
 
   const page = book?.pages[pageIndex];
-  const sourceIsJapanese = direction === "ja-en";
+  const { source, target } = splitDirection(direction);
+  const sourceJa = source === "ja";
+  const targetJa = target === "ja";
+  // Dictionary lookups (Jisho) cover English and Japanese words; other
+  // languages read + translate, so their words are not made tappable.
+  const sourceLookup = source === "en" || source === "ja";
 
   // Character-ranged token streams for both panes. Azure alignment spans use
   // the same character offsets, so ranges here map directly onto them.
   const srcParas = useMemo(
-    () => (page ? tokenizeParagraphs(page.text, sourceIsJapanese) : []),
-    [page, sourceIsJapanese],
+    () => (page ? tokenizeParagraphs(page.text, sourceJa) : []),
+    [page, sourceJa],
   );
   const tgtParas = useMemo(
-    () => (translation ? tokenizeParagraphs(translation, !sourceIsJapanese) : []),
-    [translation, sourceIsJapanese],
+    () => (translation ? tokenizeParagraphs(translation, targetJa) : []),
+    [translation, targetJa],
   );
 
   // Cross-pane highlights: a hovered token in one pane marks its equivalent
@@ -461,7 +467,7 @@ function ReaderPage() {
     const clean = word.replace(/[^\p{L}\p{N}'-]/gu, "");
     if (!clean) return;
     setSelected({ word: clean, loading: true, exampleLoading: false });
-    speak(clean, sourceIsJapanese ? "ja-JP" : "en-US");
+    speak(clean, speechLang(source));
     try {
       // Dictionary card first — meaning, reading and part of speech appear as
       // soon as Jisho answers, without waiting on the slower example search.
@@ -515,21 +521,12 @@ function ReaderPage() {
       <div className="mx-auto max-w-[1240px] px-6 pt-14 pb-8 lg:px-10">
         <div className="flex flex-wrap items-end justify-between gap-6">
           <div className="max-w-2xl">
-            <div className="mb-4 flex items-center gap-3">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.3em] text-accent">
-                {book ? page?.chapter?.slice(0, 40) || "Reading" : "Start here"}
-              </span>
-              <span className="h-px w-8 bg-foreground/30" />
-              <span className="text-[11px] uppercase tracking-[0.3em] text-mute">
-                {book ? book.author : "EPUB · English ⇄ 日本語"}
-              </span>
-            </div>
             <h1 className="font-serif text-5xl font-bold leading-[0.98] md:text-6xl">
               {book ? (
                 book.title
               ) : (
                 <>
-                  The <span className="italic text-accent">quiet</span> hour
+                  The <span className="italic text-accent">reading</span> hour
                 </>
               )}
             </h1>
@@ -628,7 +625,7 @@ function ReaderPage() {
             <article className="rounded-2xl border border-border bg-card p-7 md:p-9">
               <div className="mb-6 flex items-center justify-between">
                 <span className="text-[11px] font-semibold uppercase tracking-[0.25em] text-mute">
-                  Original · {sourceIsJapanese ? "Japanese" : "English"}
+                  Original · {langLabel(source)}
                 </span>
                 <span className="text-[11px] tracking-[0.2em] text-mute">
                   {book ? `${pageIndex + 1} / ${book.pages.length}` : "— / —"}
@@ -636,13 +633,11 @@ function ReaderPage() {
               </div>
 
               {page ? (
-                <div
-                  className={`text-[19px] ${sourceIsJapanese ? "font-jp leading-[2.1]" : "font-serif leading-[1.95]"}`}
-                >
+                <div className={`text-[19px] ${fontClass(source)}`}>
                   {srcParas.map((para, pi) => (
                     <p key={pi} className={pi ? "mt-5" : ""}>
                       {para.tokens.map((token, ti) => {
-                        if (!token.word) return <span key={ti}>{token.text}</span>;
+                        if (!token.word || !sourceLookup) return <span key={ti}>{token.text}</span>;
                         const highlighted = highlight.src.get(pi)?.has(ti);
                         const saved = savedTerms.has(token.text.toLowerCase());
                         return (
@@ -700,10 +695,10 @@ function ReaderPage() {
             <article className="rounded-2xl border border-border bg-card p-7 md:p-9">
               <div className="mb-6 flex items-center justify-between">
                 <span className="text-[11px] font-semibold uppercase tracking-[0.25em] text-accent">
-                  Translation · {sourceIsJapanese ? "English" : "Japanese"}
+                  Translation · {langLabel(target)}
                 </span>
                 <span className="text-[11px] tracking-[0.2em] text-mute">
-                  {sourceIsJapanese ? "full page" : "全訳"}
+                  {targetJa ? "全訳" : "full page"}
                 </span>
               </div>
 
@@ -714,9 +709,7 @@ function ReaderPage() {
                   ))}
                 </div>
               ) : translation ? (
-                <div
-                  className={`text-[19px] ${sourceIsJapanese ? "font-serif leading-[1.95]" : "font-jp leading-[2.1]"}`}
-                >
+                <div className={`text-[19px] ${fontClass(target)}`}>
                   {tgtParas.map((para, pi) => (
                     <p key={pi} className={pi ? "mt-5" : ""}>
                       {para.tokens.map((token, ti) => {
@@ -747,9 +740,7 @@ function ReaderPage() {
                   {alignment ? "Hover any word to see its match" : "Whole page, translated each turn"}
                 </span>
                 <button
-                  onClick={() =>
-                    translation && speak(translation, sourceIsJapanese ? "en-US" : "ja-JP")
-                  }
+                  onClick={() => translation && speak(translation, speechLang(target))}
                   className="text-mute transition-colors hover:text-accent"
                 >
                   Listen

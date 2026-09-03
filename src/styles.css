@@ -56,6 +56,7 @@
   --font-serif: "Playfair Display", Georgia, serif;
   --font-sans: "Inter", system-ui, sans-serif;
   --font-jp: "Noto Serif JP", serif;
+  --font-ko: "Noto Serif KR", "Noto Serif JP", serif;
 }
 
 :root {
